@@ -116,7 +116,7 @@ services:
 
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    image: simonclr/scr-pki-postgres:latest
     container_name: pki_postgres
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-pki_user}
@@ -125,7 +125,6 @@ services:
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - backend-net
     restart: unless-stopped

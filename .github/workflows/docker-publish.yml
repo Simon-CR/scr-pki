@@ -29,6 +29,9 @@ jobs:
           - service: nginx
             image_name: scr-pki-nginx
             context: ./nginx
+          - service: postgres
+            image_name: scr-pki-postgres
+            context: ./database
 
     permissions:
       contents: read
