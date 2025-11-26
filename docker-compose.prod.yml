@@ -59,7 +59,7 @@ services:
       
       # Security
       - SECRET_KEY=${JWT_SECRET_KEY}
-      - ALLOWED_HOSTS=*
+      - ALLOWED_HOSTS=["*"]
       
       # Database
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
