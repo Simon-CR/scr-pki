@@ -4,7 +4,7 @@ services:
     image: simonclr/scr-pki-nginx:latest
     container_name: pki_nginx
     ports:
-      - "${WEB_PORT:-9443}:443"
+      - "9443:443"
       - "9080:80"
     volumes:
       - ssl_data:/etc/nginx/ssl
