@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+import httpx
 import structlog
 import os
 from datetime import datetime, timezone
@@ -972,3 +973,38 @@ def update_alert_settings(
     db.commit()
     
     return settings
+
+class VersionCheckResponse(BaseModel):
+    current_version: str
+    latest_version: str
+    update_available: bool
+    release_url: Optional[str] = None
+
+@router.get("/version-check", response_model=VersionCheckResponse)
+async def check_version(current_user = Depends(require_admin)):
+    """
+    Check for updates against the GitHub repository.
+    """
+    current_version = "1.0.0" 
+    latest_version = current_version
+    release_url = "https://github.com/Simon-CR/scr-pki/releases"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.github.com/repos/Simon-CR/scr-pki/releases/latest",
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                data = response.json()
+                latest_version = data.get("tag_name", "").lstrip("v")
+                release_url = data.get("html_url")
+    except Exception as e:
+        logger.warning("Failed to check for updates", error=str(e))
+        
+    return VersionCheckResponse(
+        current_version=current_version,
+        latest_version=latest_version,
+        update_available=latest_version != current_version,
+        release_url=release_url
+    )

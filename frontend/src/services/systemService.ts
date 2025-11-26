@@ -51,6 +51,13 @@ export interface RestoreRequest {
   restore_vault?: boolean
 }
 
+export interface VersionCheckResponse {
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  release_url?: string
+}
+
 export const systemService = {
   updateSystemCertificate: async (data: SystemCertRequest): Promise<SystemCertResponse> => {
     return api.post<SystemCertResponse>('/system/certificate', data)
@@ -124,5 +131,9 @@ export const systemService = {
         'Content-Type': 'multipart/form-data'
       }
     })
+  },
+
+  checkVersion: async (): Promise<VersionCheckResponse> => {
+    return api.get<VersionCheckResponse>('/system/version-check')
   }
 }
