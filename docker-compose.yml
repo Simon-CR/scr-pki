@@ -92,9 +92,9 @@ services:
       - DEFAULT_SIGNATURE_ALGORITHM=${DEFAULT_SIGNATURE_ALGORITHM:-SHA256}
       
       # Admin User
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@homelab.local}
+      # - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      # - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      # - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@homelab.local}
       
       # JWT
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
@@ -102,14 +102,14 @@ services:
       - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
       
       # SMTP
-      - SMTP_ENABLED=${SMTP_ENABLED:-false}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
-      - ALERT_EMAIL_FROM=${ALERT_EMAIL_FROM}
-      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
+      # - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      # - SMTP_HOST=${SMTP_HOST}
+      # - SMTP_PORT=${SMTP_PORT:-587}
+      # - SMTP_USERNAME=${SMTP_USERNAME}
+      # - SMTP_PASSWORD=${SMTP_PASSWORD}
+      # - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      # - ALERT_EMAIL_FROM=${ALERT_EMAIL_FROM}
+      # - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
     volumes:
       - ./data/certs:/app/certs
       - ./data/logs/backend:/app/logs
@@ -207,20 +207,20 @@ services:
       - ALERT_CHECK_INTERVAL=${ALERT_CHECK_INTERVAL:-3600}
       
       # SMTP (for alerts)
-      - SMTP_ENABLED=${SMTP_ENABLED:-false}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
-      - ALERT_EMAIL_FROM=${ALERT_EMAIL_FROM}
-      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
+      # - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      # - SMTP_HOST=${SMTP_HOST}
+      # - SMTP_PORT=${SMTP_PORT:-587}
+      # - SMTP_USERNAME=${SMTP_USERNAME}
+      # - SMTP_PASSWORD=${SMTP_PASSWORD}
+      # - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      # - ALERT_EMAIL_FROM=${ALERT_EMAIL_FROM}
+      # - ALERT_EMAIL_TO=${ALERT_EMAIL_TO}
       
       # Webhook Configuration
-      - WEBHOOK_SLACK_ENABLED=${WEBHOOK_SLACK_ENABLED:-false}
-      - WEBHOOK_SLACK_URL=${WEBHOOK_SLACK_URL}
-      - WEBHOOK_DISCORD_ENABLED=${WEBHOOK_DISCORD_ENABLED:-false}
-      - WEBHOOK_DISCORD_URL=${WEBHOOK_DISCORD_URL}
+      # - WEBHOOK_SLACK_ENABLED=${WEBHOOK_SLACK_ENABLED:-false}
+      # - WEBHOOK_SLACK_URL=${WEBHOOK_SLACK_URL}
+      # - WEBHOOK_DISCORD_ENABLED=${WEBHOOK_DISCORD_ENABLED:-false}
+      # - WEBHOOK_DISCORD_URL=${WEBHOOK_DISCORD_URL}
     volumes:
       - ./data/logs/monitor:/app/logs
     networks:
