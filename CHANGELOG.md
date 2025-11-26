@@ -1,0 +1,116 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Project Initialization
+- Complete project documentation and architecture
+- Docker Compose configuration
+- Service structure and API design
+- Development and deployment guides
+- Security framework and best practices
+
+## [1.0.0] - 2025-11-22
+
+### Added
+- **Granular Backup & Restore**: Added ability to backup and restore Application Data (Users, Cert Metadata) and Vault Data (Keys) independently.
+- **System Reset**: Added "Danger Zone" feature to completely reset the system, including wiping the database and restarting the Vault container to clear its state.
+- **Security Policy**: Added `SECURITY.md` detailing the security architecture and risks.
+
+### Fixed
+- **Vault Reset Issue**: Fixed an issue where the "System Reset" would not correctly clear the Vault memory state.
+- **Docker Client Compatibility**: Downgraded `docker` python library to `6.1.3` and pinned `urllib3`/`requests` to resolve `http+docker` scheme errors when restarting containers.
+- **Restore Logic**: Fixed Docker socket connection string in restore logic.
+
+### Planned Features
+
+#### Certificate Management
+- Certificate Authority initialization
+- RSA certificate issuance (2048, 4096-bit)
+- Certificate renewal
+- Certificate revocation with CRL generation
+- Support for long validity periods (up to 20 years)
+- Subject Alternative Names (SANs)
+- Multiple certificate download formats
+- Deployment location tracking
+
+#### Monitoring & Alerts
+- Automated HTTPS health checks
+- SSL/TLS certificate validation
+- Service availability monitoring
+- Response time measurement
+- Configurable check intervals
+- Manual on-demand health checks
+- Multi-level expiration alerts
+- Email notifications (SMTP)
+- Webhook notifications (Slack, Discord, custom)
+
+#### Security
+- HashiCorp Vault integration
+- JWT-based authentication
+- Role-based access control
+- Audit logging
+- TLS 1.3 support
+- Secure cipher suites
+- Rate limiting
+- Security headers
+
+#### User Interface
+- React-based web interface
+- Certificate dashboard
+- Monitoring dashboard
+- Alert management
+- User management
+- Settings configuration
+
+#### API
+- RESTful API
+- JWT authentication
+- Comprehensive documentation
+- Rate limiting
+- Error handling
+
+#### Infrastructure
+- Docker Compose deployment
+- PostgreSQL database
+- HashiCorp Vault
+- Nginx reverse proxy
+- Health checks
+- Automated backups
+
+### Documentation
+- Complete user documentation
+- API documentation
+- Architecture overview
+- Security guide
+- Development guide
+- Deployment guide
+- Contributing guidelines
+
+## Version History Format
+
+### Added
+- New features
+
+### Changed
+- Changes to existing functionality
+
+### Deprecated
+- Features that will be removed in future versions
+
+### Removed
+- Removed features
+
+### Fixed
+- Bug fixes
+
+### Security
+- Security-related changes
+
+---
+
+**Note:** Version 1.0.0 is in active development. This changelog will be updated as features are implemented.

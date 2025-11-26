@@ -1,0 +1,61 @@
+# Development override for docker-compose.yml
+# This file provides development-specific configurations
+# version: '3.8' removed, obsolete with docker-compose v2+
+
+services:
+  # Frontend - Development mode with hot reload
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=/api/v1
+      - VITE_PROXY_TARGET=http://backend:8000
+      - VITE_DEV_SERVER_PORT=3000
+      - VITE_HMR_PORT=${WEB_PORT:-9443}
+    # Ports removed to force access via Nginx
+    command: npm run dev -- --host 0.0.0.0 --port 3000
+
+  # Backend - Development mode with hot reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/requirements.txt:/app/requirements.txt
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    # Ports removed to force access via Nginx
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Vault in development mode
+  vault:
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=dev-root-token
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    # Ports removed to force access via Nginx
+    command: vault server -dev -dev-listen-address=0.0.0.0:8200
+
+  # PostgreSQL with exposed port for development
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+
+  # Remove nginx for development (direct access to services)
+  # nginx:
+  #   profiles: ["production"]

@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libc6-dev \
+    curl \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Create non-root user (optional for dev, but good practice)
+RUN useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app
+
+# We run as root in dev to allow easy package installation/file modification if needed,
+# or we can switch to app. For now, let's stick to what works for the user.
+# The production Dockerfile uses 'app' user.
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
