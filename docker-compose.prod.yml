@@ -144,6 +144,9 @@ services:
     environment:
       - VAULT_ADDR=http://127.0.0.1:8200
       - VAULT_API_ADDR=http://127.0.0.1:8200
+      - POSTGRES_USER=${POSTGRES_USER:-pki_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-pki}
     volumes:
       - ./data/vault/data:/vault/data
       - ./data/vault/logs:/vault/logs
@@ -157,7 +160,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    command: server
+    command: server -config=/vault/config/vault.json
     security_opt:
       - apparmor:unconfined
     healthcheck:
