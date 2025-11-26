@@ -92,7 +92,7 @@ def update_system_certificate(
         
         # Retrieve the private key from Vault
         # The Certificate model stores the path to the private key in Vault
-        private_key_pem = vault_client.retrieve_private_key(cert.private_key_vault_path)
+        private_key_pem = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
         
         if not private_key_pem:
             raise HTTPException(
