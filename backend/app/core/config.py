@@ -58,9 +58,7 @@ class Settings(BaseSettings):
     CERT_ALLOWED_KEY_SIZES: List[int] = [2048, 4096]
     
     # Authentication Settings
-    ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str
-    ADMIN_EMAIL: str = "admin@homelab.local"
+    # ADMIN_USERNAME/PASSWORD/EMAIL removed - enrollment is done via UI on first start
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
     
     # Create default admin user - DISABLED for fresh start experience
+    # Enrollment is now handled via the /setup endpoint
     # await create_default_admin()
     
     # Initialize Vault connection

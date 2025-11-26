@@ -19,42 +19,44 @@ async def create_default_admin():
     """
     Create default admin user if it doesn't exist.
     This is called during application startup.
+    DEPRECATED: Enrollment is now done via UI.
     """
-    from app.core.database import SessionLocal
+    pass
+    # from app.core.database import SessionLocal
     
-    db = SessionLocal()
-    try:
-        # Check if admin user already exists
-        existing_admin = db.query(User).filter(
-            User.username == settings.ADMIN_USERNAME
-        ).first()
-        
-        if existing_admin:
-            logger.info("Default admin user already exists", username=settings.ADMIN_USERNAME)
-            return
-        
-        # Create default admin user
-        admin_user = User(
-            username=settings.ADMIN_USERNAME,
-            email=settings.ADMIN_EMAIL,
-            hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
-            full_name="Default Administrator",
-            role=UserRole.ADMIN,
-            is_active=True,
-            is_verified=True
-        )
-        
-        db.add(admin_user)
-        db.commit()
-        
-        logger.info("Default admin user created successfully", username=settings.ADMIN_USERNAME)
-        
-    except IntegrityError:
-        db.rollback()
-        logger.error("Failed to create default admin user: IntegrityError")
-    except Exception as e:
-        db.rollback()
-        logger.error("Failed to create default admin user", error=str(e))
+    # db = SessionLocal()
+    # try:
+    #     # Check if admin user already exists
+    #     existing_admin = db.query(User).filter(
+    #         User.username == settings.ADMIN_USERNAME
+    #     ).first()
+    #     
+    #     if existing_admin:
+    #         logger.info("Default admin user already exists", username=settings.ADMIN_USERNAME)
+    #         return
+    #     
+    #     # Create default admin user
+    #     admin_user = User(
+    #         username=settings.ADMIN_USERNAME,
+    #         email=settings.ADMIN_EMAIL,
+    #         hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
+    #         full_name="Default Administrator",
+    #         role=UserRole.ADMIN,
+    #         is_active=True,
+    #         is_verified=True
+    #     )
+    #     
+    #     db.add(admin_user)
+    #     db.commit()
+    #     
+    #     logger.info("Default admin user created successfully", username=settings.ADMIN_USERNAME)
+    #     
+    # except IntegrityError:
+    #     db.rollback()
+    #     logger.error("Failed to create default admin user: IntegrityError")
+    # except Exception as e:
+    #     db.rollback()
+    #     logger.error("Failed to create default admin user", error=str(e))
 
 def create_user(db: Session, user_in: Any) -> User:
     """Create a new user."""
