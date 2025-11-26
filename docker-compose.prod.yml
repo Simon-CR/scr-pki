@@ -16,6 +16,8 @@ services:
       - frontend
       - backend
     restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/health"]
       interval: 30s
@@ -36,6 +38,8 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
@@ -101,6 +105,8 @@ services:
       vault:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -123,6 +129,8 @@ services:
     networks:
       - backend-net
     restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pki_user} -d ${POSTGRES_DB:-pki}"]
       interval: 10s
@@ -151,6 +159,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: server
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD", "sh", "-c", "vault status > /dev/null || [ $? -eq 2 ]"]
       interval: 10s
@@ -187,6 +197,8 @@ services:
       - postgres
       - backend
     restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
       interval: 60s
