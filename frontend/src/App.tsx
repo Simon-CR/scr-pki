@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useAuth } from './contexts/AuthContext'
+import { useAuth, useRequireAuth } from './contexts/AuthContext'
 import LoadingSpinner from './components/LoadingSpinner'
 
 import Layout from './components/Layout'
@@ -13,6 +13,21 @@ import Alerts from './pages/Alerts'
 import SystemSettings from './pages/SystemSettings'
 import Users from './pages/Users'
 import ErrorBoundary from './components/ErrorBoundary'
+
+// Wrapper for protected routes
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const auth = useRequireAuth()
+  
+  if (auth.loading) {
+    return <LoadingSpinner />
+  }
+  
+  if (!auth.isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
 
 function App() {
   const { loading } = useAuth()
@@ -32,27 +47,29 @@ function App() {
         <Route
           path="/*"
           element={
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                
-                {/* Certificate Routes */}
-                <Route path="/certificates" element={<Certificates />} />
-                <Route path="/authorities" element={<Authorities />} />
-                
-                {/* Monitoring Routes */}
-                <Route path="/monitoring" element={<Monitoring />} />
-                <Route path="/alerts" element={<Alerts />} />
-                
-                {/* System Routes */}
-                <Route path="/users" element={<Users />} />
-                <Route path="/settings" element={<SystemSettings />} />
+            <ProtectedRoute>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  
+                  {/* Certificate Routes */}
+                  <Route path="/certificates" element={<Certificates />} />
+                  <Route path="/authorities" element={<Authorities />} />
+                  
+                  {/* Monitoring Routes */}
+                  <Route path="/monitoring" element={<Monitoring />} />
+                  <Route path="/alerts" element={<Alerts />} />
+                  
+                  {/* System Routes */}
+                  <Route path="/users" element={<Users />} />
+                  <Route path="/settings" element={<SystemSettings />} />
 
-                {/* Catch all */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </Routes>
-            </Layout>
+                  {/* Catch all */}
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                </Routes>
+              </Layout>
+            </ProtectedRoute>
           }
         />
       </Routes>
