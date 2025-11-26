@@ -22,6 +22,7 @@ from .monitoring import (
     MonitoringAlertChannel,
     AlertChannelType,
 )
+from .system import SystemConfig
 # Temporarily commented out due to SQLAlchemy metadata conflict
 # from .alert import Alert, AlertType, AlertStatus, AlertRule
 
@@ -45,6 +46,9 @@ __all__ = [
     "CheckResult",
     "MonitoringAlertChannel",
     "AlertChannelType",
+    
+    # System models
+    "SystemConfig",
     
     # Alert models - temporarily disabled
     # "Alert",
