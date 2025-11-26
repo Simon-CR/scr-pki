@@ -26,6 +26,7 @@ from app.models.ca import CertificateAuthority
 from app.models.monitoring import MonitoringService
 from app.models.user import User
 # from app.models.alert import Alert
+from cryptography.hazmat.primitives import serialization
 
 logger = structlog.get_logger(__name__)
 
@@ -92,13 +93,20 @@ def update_system_certificate(
         
         # Retrieve the private key from Vault
         # The Certificate model stores the path to the private key in Vault
-        private_key_pem = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
+        private_key_obj = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
         
-        if not private_key_pem:
+        if not private_key_obj:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve generated private key"
             )
+            
+        # Serialize private key to PEM bytes
+        private_key_pem = private_key_obj.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
             
         # Write to Nginx SSL directory
         # We assume the volume is mounted at /etc/nginx/ssl inside the container
