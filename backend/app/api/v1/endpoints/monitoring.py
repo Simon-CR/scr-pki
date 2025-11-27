@@ -2,7 +2,7 @@
 Monitoring service endpoints.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 import structlog
@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.auth import get_current_active_user, require_operator_or_admin
 from app.core.database import get_db
 from app.models.certificate import Certificate, CertificateStatus
-from app.models.monitoring import CheckResult
+from app.models.monitoring import CheckResult, MonitoringService
 from app.models.user import User
+from app.services.monitoring_verifier import verify_remote_certificate
 
 logger = structlog.get_logger(__name__)
 
@@ -99,11 +100,47 @@ async def trigger_manual_check(
     current_user: User = Depends(require_operator_or_admin)
 ) -> Any:
     """Trigger manual health check for a service."""
-    # TODO: Implement manual check trigger once monitoring workers exist
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Manual check trigger not yet implemented"
-    )
+    logger.info("Triggering manual check", service_id=service_id, user_id=current_user.id)
+    
+    service = db.query(MonitoringService).filter(MonitoringService.id == service_id).first()
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Monitoring service not found"
+        )
+        
+    if not service.certificate:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Monitoring service is not associated with a certificate"
+        )
+        
+    # Perform check
+    import time
+    start_time = time.time()
+    verification = verify_remote_certificate(service.certificate)
+    duration = time.time() - start_time
+    
+    # Update service
+    if verification["verification_error"]:
+        result = CheckResult.FAILURE
+        error_msg = verification["verification_error"]
+    elif verification["certificate_match"] is False:
+        result = CheckResult.WARNING
+        if verification["observed_serial_number"]:
+            error_msg = f"Serial mismatch: {verification['observed_serial_number']}"
+        else:
+            error_msg = "Certificate mismatch"
+    else:
+        result = CheckResult.SUCCESS
+        error_msg = None
+        
+    service.update_statistics(result, duration)
+    service.last_error_message = error_msg
+    
+    db.commit()
+    
+    return {"message": "Check completed", "result": result.value}
 
 
 def _query_monitored_certificates(db: Session) -> List[Certificate]:

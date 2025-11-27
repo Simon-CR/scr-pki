@@ -33,6 +33,8 @@ class AlertResponse(BaseModel):
     severity: str
     status: str
     created_at: str
+    resource_id: Optional[int] = None
+    resource_type: Optional[str] = None
 
 
 @router.get("/", response_model=List[AlertResponse])
@@ -115,6 +117,8 @@ def _append_expired_certificate_alerts(
             alert_type="certificate_expiry",
             severity="critical",
             created_at=when,
+            resource_id=cert.id,
+            resource_type="certificate",
         )
 
     for cert in active:
@@ -130,6 +134,8 @@ def _append_expired_certificate_alerts(
             alert_type="certificate_expiry",
             severity="critical",
             created_at=expires_at,
+            resource_id=cert.id,
+            resource_type="certificate",
         )
 
 
@@ -153,6 +159,8 @@ def _append_expiring_certificate_alerts(alerts: List[dict], active: List[Certifi
             alert_type="certificate_expiry",
             severity=severity,
             created_at=cert.updated_at or _utcnow(),
+            resource_id=cert.id,
+            resource_type="certificate",
         )
 
 
@@ -166,6 +174,8 @@ def _append_revoked_certificate_alerts(alerts: List[dict], revoked: List[Certifi
             severity="warning",
             status="active",
             created_at=cert.revoked_at,
+            resource_id=cert.id,
+            resource_type="certificate",
         )
 
 
@@ -182,6 +192,8 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                 alert_type="monitoring_configuration",
                 severity="info",
                 created_at=cert.updated_at,
+                resource_id=cert.id,
+                resource_type="certificate",
             )
             continue
 
@@ -203,6 +215,8 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     alert_type="monitoring_error",
                     severity="critical",
                     created_at=timestamp,
+                    resource_id=service.id,
+                    resource_type="monitoring_service",
                 )
             elif service.last_check_result == CheckResult.WARNING:
                 _add_alert(
@@ -212,6 +226,8 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     alert_type="monitoring_warning",
                     severity="warning",
                     created_at=timestamp,
+                    resource_id=service.id,
+                    resource_type="monitoring_service",
                 )
             elif service.last_check_result == CheckResult.ERROR:
                 _add_alert(
@@ -221,6 +237,8 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     alert_type="monitoring_error",
                     severity="warning",
                     created_at=timestamp,
+                    resource_id=service.id,
+                    resource_type="monitoring_service",
                 )
 
 
@@ -249,6 +267,8 @@ def _add_alert(
     severity: str,
     status: str = "active",
     created_at: Optional[datetime] = None,
+    resource_id: Optional[int] = None,
+    resource_type: Optional[str] = None,
 ) -> None:
     timestamp = _normalize_timestamp(created_at)
     alerts.append(
@@ -260,6 +280,8 @@ def _add_alert(
             "severity": severity.lower(),
             "status": status,
             "created_at": timestamp,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
         }
     )
 

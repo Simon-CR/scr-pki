@@ -1,5 +1,5 @@
-import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../services/api'
 
 interface Alert {
@@ -10,9 +10,14 @@ interface Alert {
   severity: string
   status: string
   created_at: string
+  resource_id?: number
+  resource_type?: string
 }
 
 const Alerts: React.FC = () => {
+  const queryClient = useQueryClient()
+  const [retestingId, setRetestingId] = useState<number | null>(null)
+
   // Fetch alerts
   const { data: alerts, isLoading, error } = useQuery({
     queryKey: ['alerts'],
@@ -21,6 +26,21 @@ const Alerts: React.FC = () => {
       return response
     }
   })
+
+  const handleRetest = async (alert: Alert) => {
+    if (!alert.resource_id || alert.resource_type !== 'monitoring_service') return
+
+    setRetestingId(alert.id)
+    try {
+      await api.post(`/monitoring/services/${alert.resource_id}/check`)
+      // Invalidate alerts query to refresh list
+      await queryClient.invalidateQueries({ queryKey: ['alerts'] })
+    } catch (error) {
+      console.error('Failed to retest', error)
+    } finally {
+      setRetestingId(null)
+    }
+  }
 
   const getSeverityColor = (severity: string) => {
     switch (severity.toLowerCase()) {
@@ -194,7 +214,28 @@ const Alerts: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="flex-shrink-0">
+                    <div className="flex-shrink-0 flex items-center space-x-2">
+                      {alert.resource_type === 'monitoring_service' && (
+                        <button
+                          onClick={() => handleRetest(alert)}
+                          disabled={retestingId === alert.id}
+                          className={`inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                            retestingId === alert.id ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          {retestingId === alert.id ? (
+                            <>
+                              <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-blue-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              Testing...
+                            </>
+                          ) : (
+                            'Re-test'
+                          )}
+                        </button>
+                      )}
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(alert.status)}`}>
                         {alert.status.toUpperCase()}
                       </span>
