@@ -14,8 +14,8 @@ from app.core.auth import get_current_active_user, require_operator_or_admin
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.certificate import Certificate, CertificateStatus
+from app.models.monitoring import CheckResult
 from app.models.user import User
-from app.services.monitoring_verifier import verify_remote_certificate
 
 logger = structlog.get_logger(__name__)
 
@@ -185,41 +185,43 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
             )
             continue
 
-        verification = verify_remote_certificate(cert)
-        error = verification["verification_error"]
-        match = verification["certificate_match"]
-        observed = verification["observed_serial_number"]
-        timestamp = verification["last_verified_at"] or _utcnow()
-
-        if error:
-            _add_alert(
-                alerts,
-                title=f"Monitoring error: {cert.common_name}",
-                message=f"Certificate check failed: {error}",
-                alert_type="monitoring_error",
-                severity="warning",
-                created_at=timestamp,
-            )
+        # Use stored monitoring results instead of performing live checks
+        if not cert.monitoring_services:
             continue
 
-        if match is False:
-            if observed:
-                message = (
-                    f"Observed serial {observed} does not match assigned serial {cert.serial_number}."
-                )
-                severity = "critical"
-            else:
-                message = "Remote endpoint did not present the assigned certificate."
-                severity = "warning"
+        for service in cert.monitoring_services:
+            if not service.last_check_result:
+                continue
 
-            _add_alert(
-                alerts,
-                title=f"Monitoring mismatch: {cert.common_name}",
-                message=message,
-                alert_type="monitoring_verification",
-                severity=severity,
-                created_at=timestamp,
-            )
+            timestamp = service.last_check_at or _utcnow()
+            
+            if service.last_check_result == CheckResult.FAILURE:
+                _add_alert(
+                    alerts,
+                    title=f"Monitoring failure: {cert.common_name}",
+                    message=f"Check failed: {service.last_error_message or 'Unknown error'}",
+                    alert_type="monitoring_error",
+                    severity="critical",
+                    created_at=timestamp,
+                )
+            elif service.last_check_result == CheckResult.WARNING:
+                _add_alert(
+                    alerts,
+                    title=f"Monitoring warning: {cert.common_name}",
+                    message=f"Warning: {service.last_error_message or 'Check warning'}",
+                    alert_type="monitoring_warning",
+                    severity="warning",
+                    created_at=timestamp,
+                )
+            elif service.last_check_result == CheckResult.ERROR:
+                _add_alert(
+                    alerts,
+                    title=f"Monitoring error: {cert.common_name}",
+                    message=f"System error during check: {service.last_error_message or 'Unknown error'}",
+                    alert_type="monitoring_error",
+                    severity="warning",
+                    created_at=timestamp,
+                )
 
 
 def _select_expiry_window(days_until_expiry: int) -> Optional[tuple[int, str]]:
