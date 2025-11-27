@@ -175,6 +175,7 @@ class SystemHealthResponse(BaseModel):
     total_certificates: int
     total_cas: int
     missing_keys: List[str] = []
+    orphaned_keys: List[str] = []
 
 @router.get("/health", response_model=SystemHealthResponse)
 def check_system_health(
@@ -183,7 +184,7 @@ def check_system_health(
 ):
     """
     Perform a system health check, verifying Database and Vault connectivity,
-    and checking for data integrity (missing keys).
+    and checking for data integrity (missing keys and orphaned keys).
     """
     health = SystemHealthResponse(
         database_connected=True,
@@ -192,7 +193,8 @@ def check_system_health(
         vault_sealed=True,
         total_certificates=0,
         total_cas=0,
-        missing_keys=[]
+        missing_keys=[],
+        orphaned_keys=[]
     )
     
     # Check Vault Status
@@ -211,11 +213,14 @@ def check_system_health(
     from app.models.certificate import Certificate
     from app.models.ca import CertificateAuthority
     
+    expected_paths = set()
+
     # Check CAs
     cas = db.query(CertificateAuthority).all()
     health.total_cas = len(cas)
     for ca in cas:
         if ca.private_key_vault_path:
+            expected_paths.add(ca.private_key_vault_path)
             # We use a lightweight check if possible, but retrieve_private_key is safe enough for now
             # Ideally we'd have a 'has_key' method to avoid transferring the key
             key = vault_client.retrieve_private_key(ca.private_key_vault_path)
@@ -227,9 +232,34 @@ def check_system_health(
     health.total_certificates = len(certs)
     for cert in certs:
         if cert.pem_private_key_vault_path:
+            expected_paths.add(cert.pem_private_key_vault_path)
             key = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
             if not key:
                 health.missing_keys.append(f"Cert: {cert.common_name} (ID: {cert.id})")
+    
+    # Check for Orphaned Keys (Keys in Vault but not in DB)
+    try:
+        # Check 'certificates/' folder
+        cert_keys = vault_client.list_stored_keys("certificates")
+        for key in cert_keys:
+            # Skip directory markers if any
+            if key.endswith('/'): continue
+            
+            full_path = f"certificates/{key}"
+            if full_path not in expected_paths:
+                health.orphaned_keys.append(full_path)
+                
+        # Check 'cas/' folder
+        ca_keys = vault_client.list_stored_keys("cas")
+        for key in ca_keys:
+            if key.endswith('/'): continue
+            
+            full_path = f"cas/{key}"
+            if full_path not in expected_paths:
+                health.orphaned_keys.append(full_path)
+                
+    except Exception as e:
+        logger.error("Failed to scan for orphaned keys", error=str(e))
                 
     return health
 

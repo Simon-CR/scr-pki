@@ -315,21 +315,40 @@ class VaultClient:
             logger.error("Failed to delete key", key_id=key_id, error=str(e))
             return False
     
-    def list_stored_keys(self) -> list:
+    def list_stored_keys(self, subpath: str = "") -> list:
         """
-        List all stored keys in Vault.
+        List stored keys in Vault.
         
+        Args:
+            subpath: Optional subpath under pki/keys (e.g. "certificates")
+            
         Returns:
-            list: List of key identifiers
+            list: List of key identifiers (relative to the path)
         """
         try:
+            path = "pki/keys"
+            if subpath:
+                path = f"{path}/{subpath}"
+                
             if settings.VAULT_DEV_MODE:
-                return list(self._dev_store.keys())
-            response = self.client.secrets.kv.v2.list_secrets(path="pki/keys")
+                # Filter dev store keys that start with the path
+                # Note: _dev_store keys are full paths like "pki/keys/certificates/123"
+                prefix = f"{path}/"
+                keys = []
+                for k in self._dev_store.keys():
+                    if k.startswith(prefix):
+                        # Return just the filename part
+                        keys.append(k[len(prefix):])
+                    elif not subpath and k.startswith("pki/keys/") and "/" not in k[9:]:
+                         # Root level keys
+                         keys.append(k[9:])
+                return keys
+
+            response = self.client.secrets.kv.v2.list_secrets(path=path)
             return response['data']['keys']
             
         except Exception as e:
-            logger.error("Failed to list keys", error=str(e))
+            # It's common to get 404 if the path doesn't exist (e.g. no keys yet)
             return []
     
     def get_vault_status(self) -> Dict[str, Any]:
