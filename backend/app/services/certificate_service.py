@@ -424,18 +424,15 @@ class CertificateService:
 
             key_path = cert.pem_private_key_vault_path
 
+            # Attempt to delete from Vault first to prevent orphaned data
+            if key_path:
+                if not self.vault.delete_key(key_path):
+                    # If delete_key returns False, it failed (e.g. Vault sealed)
+                    # We should abort the database deletion to prevent inconsistency
+                    raise ValueError("Failed to delete private key from Vault. Ensure Vault is unsealed and accessible.")
+
             db.delete(cert)
             db.commit()
-
-            if key_path:
-                try:
-                    self.vault.delete_key(key_path)
-                except Exception as vault_error:
-                    logger.warning(
-                        "Failed to delete private key from Vault during certificate deletion",
-                        certificate_id=certificate_id,
-                        vault_error=str(vault_error),
-                    )
 
             logger.info("Certificate deleted", certificate_id=certificate_id)
             return True
