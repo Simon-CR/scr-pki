@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Development and deployment guides
 - Security framework and best practices
 
+## [0.1.0] - 2025-11-27
+
+### Added
+- **Auto-Restart Nginx**: Added ability to automatically restart the Nginx container when updating the system certificate.
+- **Parallel Monitoring**: Optimized monitoring checks to run in parallel, significantly improving dashboard load times.
+- **System Updates**: Added version tracking and update checking for stack containers.
+
+### Fixed
+- **System Cert Serialization**: Fixed a bug where the private key was not being serialized correctly before writing to disk.
+- **Nginx Crash Loop**: Fixed an issue where a corrupted key file would cause Nginx to enter a restart loop.
+
 ## [1.0.0] - 2025-11-22
 
 ### Added

@@ -116,6 +116,7 @@ services:
       - ./backups:/app/backups
       - ./nginx/ssl:/etc/nginx/ssl
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./VERSION:/app/VERSION:ro
     networks:
       - frontend-net
       - backend-net

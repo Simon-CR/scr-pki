@@ -8,7 +8,7 @@ interface LayoutProps {
   children: React.ReactNode
 }
 
-const APP_VERSION = '1.0.0'
+const APP_VERSION = '0.1.0'
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, logout, loading } = useAuth()
@@ -192,7 +192,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-500">
-              © 2024 SCR-PKI v{APP_VERSION}. All rights reserved.
+              © {new Date().getFullYear()} SCR-PKI v{latestVersion || APP_VERSION}. All rights reserved.
             </div>
             <div className="flex space-x-6">
               <a href="#" className="text-sm text-gray-500 hover:text-gray-900">

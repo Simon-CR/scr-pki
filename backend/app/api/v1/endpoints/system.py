@@ -1019,7 +1019,20 @@ async def check_version(current_user = Depends(require_admin)):
     """
     Check for updates against the GitHub repository.
     """
-    current_version = "1.0.0" 
+    current_version = "0.1.0"
+    try:
+        # Try to read version from file (mounted at /app/VERSION or in current dir)
+        version_paths = ["VERSION", "/app/VERSION"]
+        for p in version_paths:
+            if os.path.exists(p):
+                with open(p, "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        current_version = content
+                        break
+    except Exception as e:
+        logger.warning(f"Failed to read local version file: {e}")
+
     latest_version = current_version
     release_url = "https://github.com/Simon-CR/scr-pki/releases"
     
