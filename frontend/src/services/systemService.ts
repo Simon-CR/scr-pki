@@ -4,6 +4,7 @@ import { AlertSettings, TestEmailRequest, TestWebhookRequest } from '../types'
 export interface SystemCertRequest {
   common_name: string
   subject_alt_names?: string
+  auto_restart?: boolean
 }
 
 export interface SystemCertResponse {

@@ -40,7 +40,8 @@ const SystemSettings: React.FC = () => {
   const { register, handleSubmit, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
       common_name: window.location.hostname,
-      subject_alt_names: ''
+      subject_alt_names: '',
+      auto_restart: false
     }
   })
 
@@ -914,6 +915,21 @@ const SystemSettings: React.FC = () => {
                 <p className="mt-2 text-sm text-gray-500">
                   Comma-separated list of additional hostnames or IP addresses (e.g., static IP, localhost, shortname).
                 </p>
+              </div>
+
+              <div className="flex items-start">
+                <div className="flex items-center h-5">
+                  <input
+                    id="auto_restart"
+                    type="checkbox"
+                    className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                    {...register('auto_restart')}
+                  />
+                </div>
+                <div className="ml-3 text-sm">
+                  <label htmlFor="auto_restart" className="font-medium text-gray-700">Auto-restart Nginx</label>
+                  <p className="text-gray-500">Automatically restart the Nginx container to apply the new certificate immediately.</p>
+                </div>
               </div>
 
               <div className="flex items-center justify-end">

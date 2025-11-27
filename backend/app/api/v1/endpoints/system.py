@@ -35,6 +35,7 @@ router = APIRouter()
 class SystemCertRequest(BaseModel):
     common_name: str
     subject_alt_names: Optional[str] = None
+    auto_restart: bool = False
 
 @router.post("/certificate", status_code=status.HTTP_200_OK)
 def update_system_certificate(
@@ -128,8 +129,33 @@ def update_system_certificate(
             
         logger.info("System certificate updated successfully", crt_path=crt_path)
         
+        message = "System certificate updated successfully."
+        
+        if cert_data.auto_restart:
+            try:
+                import docker
+                # Connect to Docker socket
+                # We try environment first, then explicit socket
+                try:
+                    client = docker.from_env()
+                    client.ping()
+                except Exception as e:
+                    logger.warning(f"docker.from_env() failed: {e}. Trying explicit socket.")
+                    client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+                
+                # Find and restart Nginx container
+                container = client.containers.get('pki_nginx')
+                container.restart()
+                logger.info("Nginx container restarted successfully")
+                message += " Nginx container has been restarted."
+            except Exception as e:
+                logger.error("Failed to restart Nginx container", error=str(e))
+                message += f" However, failed to auto-restart Nginx: {str(e)}. Please restart manually."
+        else:
+            message += " Please restart the application/Nginx to apply changes."
+
         return {
-            "message": "System certificate updated successfully. Please restart the application/Nginx to apply changes.",
+            "message": message,
             "certificate_id": cert.id,
             "common_name": cert.common_name
         }

@@ -77,6 +77,9 @@ class ServiceResponse(BaseModel):
     verification_error: Optional[str] = None
 
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 @router.get("/services", response_model=List[ServiceResponse])
 async def list_services(
     db: Session = Depends(get_db),
@@ -85,7 +88,16 @@ async def list_services(
     """List all monitored services."""
     logger.info("Listing monitored services", user_id=current_user.id)
     certificates = _query_monitored_certificates(db)
-    services = [_serialize_certificate_monitor(cert) for cert in certificates]
+    
+    # Run checks in parallel using a thread pool to avoid blocking the event loop
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        tasks = [
+            loop.run_in_executor(executor, _serialize_certificate_monitor, cert)
+            for cert in certificates
+        ]
+        services = await asyncio.gather(*tasks)
+        
     logger.info("Retrieved monitored services", count=len(services))
     return services
 
