@@ -2,21 +2,18 @@
 Shared utilities for monitoring certificate verification.
 """
 
-from __future__ import annotations
-
 import socket
 import ssl
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-import structlog
 from cryptography import x509
 
-from app.core.config import settings
-from app.models.certificate import Certificate
+from app.models import Certificate
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 VerificationResult = dict[str, Optional[object]]
 
@@ -43,12 +40,9 @@ def extract_target(target_url: str, override_port: Optional[int]) -> Optional[Tu
     return host, port
 
 
-def verify_remote_certificate(cert: Certificate) -> VerificationResult:
+def verify_remote_certificate(cert: Certificate, timeout: int = 10) -> VerificationResult:
     """Fetch the remote certificate for the monitored target and compare serial numbers."""
     result = _default_result()
-
-    if not settings.MONITORING_ENABLED:
-        return result
 
     if not cert.monitoring_enabled or not cert.monitoring_target_url:
         return result
@@ -61,12 +55,8 @@ def verify_remote_certificate(cert: Certificate) -> VerificationResult:
     host, port = target
     
     # Docker Environment Fix:
-    # If the target is localhost/127.0.0.1, it refers to the container itself.
-    # We likely want to reach the Nginx container (gateway) instead.
     if host in ["127.0.0.1", "localhost"]:
         try:
-            # Try to resolve 'nginx' service name (standard docker-compose service name)
-            # or 'pki_nginx' (container name)
             for candidate in ["nginx", "pki_nginx"]:
                 try:
                     socket.gethostbyname(candidate)
@@ -85,7 +75,7 @@ def verify_remote_certificate(cert: Certificate) -> VerificationResult:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
 
-        with socket.create_connection((host, port), timeout=settings.MONITORING_TIMEOUT) as sock:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
             with context.wrap_socket(sock, server_hostname=host) as tls_sock:
                 der_cert = tls_sock.getpeercert(binary_form=True)
 
@@ -99,14 +89,9 @@ def verify_remote_certificate(cert: Certificate) -> VerificationResult:
             "last_verified_at": now,
             "verification_error": None if matches else "Remote certificate serial does not match assigned certificate.",
         }
-    except Exception as exc:  # pragma: no cover - network errors are expected
+    except Exception as exc:
         error_message = str(exc)
-        logger.warning(
-            "Remote certificate verification failed",
-            error=error_message,
-            target_host=host,
-            target_url=cert.monitoring_target_url,
-        )
+        logger.warning(f"Remote certificate verification failed for {host}: {error_message}")
         return {
             "certificate_match": False,
             "observed_serial_number": None,

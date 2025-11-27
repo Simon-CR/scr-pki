@@ -14,7 +14,9 @@ def get_config(key: str, default: str = None) -> str:
     try:
         config = db.query(SystemConfig).filter(SystemConfig.key == key).first()
         if config:
+            # logger.info(f"Loaded config {key}: {config.value}") # Debug
             return config.value
+        logger.debug(f"Config key not found: {key}")
         return default
     except Exception as e:
         logger.error(f"Error fetching config for {key}: {e}")
@@ -24,10 +26,13 @@ def get_config(key: str, default: str = None) -> str:
 
 def get_bool_config(key: str, default: str = "false") -> bool:
     val = get_config(key, default)
+    if val is None:
+        return default.lower() == "true"
     return val.lower() == "true"
 
 async def send_email_alert(subject: str, body: str):
     if not get_bool_config("smtp_enabled"):
+        logger.info("SMTP is disabled in configuration. Skipping email alert.")
         return
     
     smtp_host = get_config("smtp_host")
@@ -39,7 +44,7 @@ async def send_email_alert(subject: str, body: str):
     email_to = get_config("alert_email_to")
 
     if not smtp_host or not email_from or not email_to:
-        logger.warning("SMTP enabled but missing configuration (host, from, or to)")
+        logger.warning(f"SMTP enabled but missing configuration. Host: {smtp_host}, From: {email_from}, To: {email_to}")
         return
 
     try:
@@ -50,6 +55,7 @@ async def send_email_alert(subject: str, body: str):
         
         msg.attach(MIMEText(body, 'plain'))
         
+        logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
         server = smtplib.SMTP(smtp_host, smtp_port)
         if smtp_use_tls:
             server.starttls()

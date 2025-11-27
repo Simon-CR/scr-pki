@@ -193,6 +193,7 @@ services:
       - ./data/logs/monitor:/app/logs
     networks:
       - backend-net
+      - frontend-net
     depends_on:
       - postgres
       - backend
