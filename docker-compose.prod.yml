@@ -62,7 +62,7 @@ services:
       - ALLOWED_HOSTS=["*"]
       
       # Database
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - DB_NAME=${POSTGRES_DB}
@@ -87,7 +87,7 @@ services:
       
       # JWT
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_ALGORITHM=HS256
+      - JWT_ALGORITHM=RS256
       - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
       
     volumes:

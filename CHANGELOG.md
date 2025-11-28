@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-11-28
+
+### Fixed
+- **Database Connection**: Fixed `ModuleNotFoundError: No module named 'psycopg2'` by ensuring the connection string uses `postgresql+psycopg://` in all configurations (Prod/Dev) and fallbacks.
+- **Production Config**: Updated `docker-compose.prod.yml` to use the correct database driver and JWT algorithm (RS256).
+
 ## [0.2.1] - 2025-11-27
 
 ### Security
