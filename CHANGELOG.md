@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Database Race Condition**: Fixed `UniqueViolation` error during startup when running with multiple workers. Added `pre_start.py` to initialize the database sequentially before spawning workers.
+- **Version Check**: Fixed issue where the backend failed to detect the local version, causing it to report "0.2.0" instead of the actual version. Added `VERSION` file to backend build and production volume mounts.
 
 ## [0.2.2] - 2025-11-28
 
