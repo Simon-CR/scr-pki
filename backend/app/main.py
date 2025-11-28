@@ -62,8 +62,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting SCR-PKI API")
     
     # Initialize database
-    await init_db()
-    logger.info("Database initialized")
+    # Note: In production with multiple workers, this is handled by pre_start.py
+    # to avoid race conditions. We keep it here for dev mode and safety.
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        # In production, this might fail if another worker is doing it, 
+        # but pre_start.py should have handled it.
+        logger.warning(f"Database initialization skipped or failed: {e}")
     
     # Create default admin user - DISABLED for fresh start experience
     # Enrollment is now handled via the /setup endpoint
