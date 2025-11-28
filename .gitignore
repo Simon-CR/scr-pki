@@ -95,3 +95,6 @@ coverage.xml
 Thumbs.db
 .DS_Store
 vault-init.json
+
+# Copilot
+.github/copilot-instructions.md
