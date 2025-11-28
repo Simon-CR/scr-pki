@@ -17,6 +17,20 @@ from app.core.vault import vault_client
 logger = structlog.get_logger(__name__)
 
 
+def ensure_utc(dt: datetime) -> datetime:
+    """
+    Ensure a datetime is timezone-aware (UTC).
+    
+    The cryptography library may return naive or aware datetimes depending
+    on the Python version and certificate. This helper ensures consistent
+    timezone-aware comparisons.
+    """
+    if dt.tzinfo is None:
+        # Naive datetime - assume UTC
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class PKIService:
     """Service for PKI operations including certificate generation and signing."""
     
@@ -196,15 +210,16 @@ class PKIService:
         # Calculate validity
         not_valid_after = now + timedelta(days=validity_days)
         
-        # Cap validity at parent CA expiry
-        if parent_cert.not_valid_after < not_valid_after:
+        # Cap validity at parent CA expiry (ensure timezone-aware comparison)
+        parent_expiry = ensure_utc(parent_cert.not_valid_after)
+        if parent_expiry < not_valid_after:
             logger.warning(
                 "Intermediate CA validity capped by parent CA expiry",
                 requested_expiry=not_valid_after,
-                capped_expiry=parent_cert.not_valid_after,
+                capped_expiry=parent_expiry,
                 parent_serial=parent_cert.serial_number
             )
-            not_valid_after = parent_cert.not_valid_after
+            not_valid_after = parent_expiry
 
         cert_builder = x509.CertificateBuilder()
         cert_builder = cert_builder.subject_name(subject)
@@ -304,15 +319,16 @@ class PKIService:
         # Calculate validity
         not_valid_after = now + timedelta(days=validity_days)
         
-        # Cap validity at CA expiry
-        if ca_cert.not_valid_after < not_valid_after:
+        # Cap validity at CA expiry (ensure timezone-aware comparison)
+        ca_expiry = ensure_utc(ca_cert.not_valid_after)
+        if ca_expiry < not_valid_after:
             logger.warning(
                 "Certificate validity capped by CA expiry",
                 requested_expiry=not_valid_after,
-                capped_expiry=ca_cert.not_valid_after,
+                capped_expiry=ca_expiry,
                 ca_serial=ca_cert.serial_number
             )
-            not_valid_after = ca_cert.not_valid_after
+            not_valid_after = ca_expiry
 
         cert_builder = x509.CertificateBuilder()
         cert_builder = cert_builder.subject_name(subject)
@@ -468,9 +484,11 @@ class PKIService:
                 cert.signature_algorithm_oid._name
             )
             
-            # Check validity period
+            # Check validity period (ensure timezone-aware comparison)
             now = datetime.now(timezone.utc)
-            if now < cert.not_valid_before or now > cert.not_valid_after:
+            not_before = ensure_utc(cert.not_valid_before)
+            not_after = ensure_utc(cert.not_valid_after)
+            if now < not_before or now > not_after:
                 logger.warning("Certificate is outside validity period", 
                              serial_number=cert.serial_number)
                 return False

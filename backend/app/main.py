@@ -64,6 +64,14 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting SCR-PKI API")
     
+    # Log configuration for debugging
+    logger.info(
+        "Configuration loaded",
+        environment=settings.ENVIRONMENT,
+        allowed_hosts=settings.ALLOWED_HOSTS,
+        cors_origins=settings.CORS_ORIGINS,
+    )
+    
     # Security warning for AUTH_DISABLED
     if settings.AUTH_DISABLED:
         logger.critical(
