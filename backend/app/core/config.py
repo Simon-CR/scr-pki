@@ -3,14 +3,50 @@ Configuration settings for the PKI Platform API.
 Loads settings from environment variables with secure defaults.
 """
 
-from typing import List, Optional
+import json
+from typing import List, Optional, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def parse_list_field(v: Union[str, List[str], None], default: List[str] = None) -> List[str]:
+    """Parse a list field from environment variable or value.
+    
+    Handles:
+    - JSON arrays: '["a", "b", "c"]'
+    - Comma-separated strings: 'a,b,c'
+    - Empty strings: '' -> default or []
+    - None: -> default or []
+    - Already a list: returns as-is
+    """
+    if v is None or v == "":
+        return default or []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        v = v.strip()
+        if not v:
+            return default or []
+        # Try JSON first
+        if v.startswith("["):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                pass
+        # Fall back to comma-separated
+        return [item.strip() for item in v.split(",") if item.strip()]
+    return default or []
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+        # Don't try to JSON parse env vars automatically
+        env_parse_none_str="None",
+    )
     
     # General Settings
     DEBUG: bool = False
@@ -61,7 +97,7 @@ class Settings(BaseSettings):
     CERT_DEFAULT_VALIDITY_DAYS: int = 3650  # 10 years
     CERT_DEFAULT_KEY_SIZE: int = 4096
     CERT_SIGNATURE_ALGORITHM: str = "SHA256"
-    CERT_ALLOWED_KEY_SIZES: List[int] = [2048, 4096]
+    CERT_ALLOWED_KEY_SIZES: Union[str, List[int]] = [2048, 4096]
     
     # Authentication Settings
     # ADMIN_USERNAME/PASSWORD/EMAIL removed - enrollment is done via UI on first start
@@ -85,8 +121,9 @@ class Settings(BaseSettings):
     PASSWORD_REQUIRE_SPECIAL: bool = False
     
     # CORS and Security
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "https://localhost", "https://127.0.0.1", "http://127.0.0.1:3000"]
-    ALLOWED_HOSTS: List[str] = [
+    # Accept both comma-separated strings and JSON arrays from environment variables
+    CORS_ORIGINS: Union[str, List[str]] = ["http://localhost:3000", "https://localhost", "https://127.0.0.1", "http://127.0.0.1:3000"]
+    ALLOWED_HOSTS: Union[str, List[str]] = [
         "localhost",
         "localhost:3000",
         "localhost:8000",
@@ -150,22 +187,36 @@ class Settings(BaseSettings):
     API_REQUEST_TIMEOUT: int = 30
     
     @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
     def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            return [i.strip() for i in v.split(",")]
-        return v
+        """Parse CORS_ORIGINS from comma-separated string or JSON array."""
+        return parse_list_field(v, ["http://localhost:3000"])
     
     @field_validator("ALLOWED_HOSTS", mode="before")
+    @classmethod
     def parse_allowed_hosts(cls, v):
-        if isinstance(v, str):
-            return [i.strip() for i in v.split(",")]
-        return v
+        """Parse ALLOWED_HOSTS from comma-separated string or JSON array."""
+        return parse_list_field(v, ["localhost", "127.0.0.1", "backend", "pki_backend"])
     
     @field_validator("CERT_ALLOWED_KEY_SIZES", mode="before")
+    @classmethod
     def parse_key_sizes(cls, v):
+        """Parse CERT_ALLOWED_KEY_SIZES from comma-separated string or JSON array."""
+        if v is None or v == "":
+            return [2048, 4096]
+        if isinstance(v, list):
+            return [int(x) for x in v]
         if isinstance(v, str):
-            return [int(i.strip()) for i in v.split(",")]
-        return v
+            v = v.strip()
+            if not v:
+                return [2048, 4096]
+            if v.startswith("["):
+                try:
+                    return [int(x) for x in json.loads(v)]
+                except json.JSONDecodeError:
+                    pass
+            return [int(x.strip()) for x in v.split(",") if x.strip()]
+        return [2048, 4096]
     
     @property
     def database_url(self) -> str:

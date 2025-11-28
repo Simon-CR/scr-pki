@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2025-11-28
+
+### Fixed
+- **ALLOWED_HOSTS Parsing**: Fixed environment variable parsing for `ALLOWED_HOSTS`, `CORS_ORIGINS`, and `CERT_ALLOWED_KEY_SIZES` to properly handle both comma-separated strings and JSON arrays from environment variables.
+
 ## [0.2.4] - 2025-11-28
 
 ### Security

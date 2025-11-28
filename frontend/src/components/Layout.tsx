@@ -8,7 +8,7 @@ interface LayoutProps {
   children: React.ReactNode
 }
 
-const APP_VERSION = '0.2.3'
+const APP_VERSION = '0.2.5'
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, logout, loading } = useAuth()
