@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **ALLOWED_HOSTS Parsing**: Fixed environment variable parsing for `ALLOWED_HOSTS`, `CORS_ORIGINS`, and `CERT_ALLOWED_KEY_SIZES` to properly handle both comma-separated strings and JSON arrays from environment variables.
 
+### Changed
+- **Frontend Dependencies**: Updated all frontend dependencies to latest versions, eliminating deprecation warnings during builds.
+- **ESLint 9**: Upgraded from deprecated ESLint 8.x to ESLint 9.x with new flat config format.
+
 ## [0.2.4] - 2025-11-28
 
 ### Security
