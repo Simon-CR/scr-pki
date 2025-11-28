@@ -5,12 +5,11 @@ uvicorn[standard]==0.24.0
 # Database and ORM
 sqlalchemy==2.0.23
 alembic==1.12.1
-psycopg2-binary==2.9.9; python_version < "3.13"
-psycopg[binary]==3.2.12; python_version >= "3.13"
+psycopg[binary]==3.1.13
 
 # Authentication and security
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+passlib[bcrypt,argon2]==1.7.4
 python-multipart==0.0.6
 
 # PKI and cryptography

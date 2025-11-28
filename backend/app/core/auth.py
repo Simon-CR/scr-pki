@@ -4,12 +4,16 @@ Authentication and authorization module using JWT tokens.
 
 from datetime import datetime, timedelta
 from typing import Optional, Union
+import os
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from passlib.context import CryptContext
 import hashlib
 import secrets
 import base64
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy.orm import Session
 import structlog
 
@@ -19,13 +23,16 @@ from app.models.user import User, UserRole
 
 logger = structlog.get_logger(__name__)
 
-# Simple password hashing using Python's built-in hashlib
-def _hash_password_internal(password: str, salt: bytes) -> str:
+# Password hashing configuration
+pwd_context = CryptContext(schemes=["bcrypt", "argon2"], deprecated="auto")
+
+# Legacy password hashing (PBKDF2)
+def _hash_password_legacy(password: str, salt: bytes) -> str:
     """Internal password hashing function using PBKDF2."""
     hashed = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
     return base64.b64encode(salt + hashed).decode('utf-8')
 
-def _verify_password_internal(password: str, hashed_password: str) -> bool:
+def _verify_password_legacy(password: str, hashed_password: str) -> bool:
     """Internal password verification function."""
     try:
         decoded = base64.b64decode(hashed_password.encode('utf-8'))
@@ -35,6 +42,54 @@ def _verify_password_internal(password: str, hashed_password: str) -> bool:
         return secrets.compare_digest(stored_hash, new_hash)
     except Exception:
         return False
+
+# JWT Key Management
+JWT_PRIVATE_KEY_PATH = "/app/certs/jwt_private.pem"
+JWT_PUBLIC_KEY_PATH = "/app/certs/jwt_public.pem"
+
+def _ensure_jwt_keys():
+    """Ensure RSA keys for JWT exist, generate if not."""
+    if os.path.exists(JWT_PRIVATE_KEY_PATH) and os.path.exists(JWT_PUBLIC_KEY_PATH):
+        return
+
+    logger.info("Generating new RSA keys for JWT signing")
+    
+    # Generate private key
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(JWT_PRIVATE_KEY_PATH), exist_ok=True)
+    
+    # Save private key
+    with open(JWT_PRIVATE_KEY_PATH, "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+        
+    # Save public key
+    public_key = private_key.public_key()
+    with open(JWT_PUBLIC_KEY_PATH, "wb") as f:
+        f.write(public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+
+def get_signing_key() -> str:
+    """Get the private key for signing JWTs."""
+    _ensure_jwt_keys()
+    with open(JWT_PRIVATE_KEY_PATH, "r") as f:
+        return f.read()
+
+def get_verification_key() -> str:
+    """Get the public key for verifying JWTs."""
+    _ensure_jwt_keys()
+    with open(JWT_PUBLIC_KEY_PATH, "r") as f:
+        return f.read()
 
 # JWT token security
 security = HTTPBearer(auto_error=False)
@@ -57,29 +112,34 @@ def _build_dev_user() -> User:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a plain password against a hashed password.
+    Supports both new (bcrypt/argon2) and legacy (PBKDF2) hashes.
     
     Args:
         plain_password: Plain text password
-        hashed_password: Base64 encoded hashed password
+        hashed_password: Hashed password
         
     Returns:
         bool: True if password matches
     """
-    return _verify_password_internal(plain_password, hashed_password)
+    try:
+        # Try verifying with passlib (handles bcrypt/argon2)
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # Fallback to legacy verification
+        return _verify_password_legacy(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
     """
-    Hash a password using PBKDF2.
+    Hash a password using secure hashing (bcrypt/argon2).
     
     Args:
         password: Plain text password
         
     Returns:
-        str: Base64 encoded hashed password
+        str: Hashed password
     """
-    salt = secrets.token_bytes(32)  # Generate 32-byte salt
-    return _hash_password_internal(password, salt)
+    return pwd_context.hash(password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -101,7 +161,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    # Use RS256 with private key
+    encoded_jwt = jwt.encode(to_encode, get_signing_key(), algorithm="RS256")
     return encoded_jwt
 
 
@@ -118,7 +179,8 @@ def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "type": "refresh"})
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    # Use RS256 with private key
+    encoded_jwt = jwt.encode(to_encode, get_signing_key(), algorithm="RS256")
     return encoded_jwt
 
 
@@ -133,7 +195,8 @@ def verify_token(token: str) -> Optional[dict]:
         dict: Token payload if valid, None otherwise
     """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        # Use RS256 with public key
+        payload = jwt.decode(token, get_verification_key(), algorithms=["RS256"])
         return payload
     except JWTError as e:
         logger.error("JWT verification failed", error=str(e))

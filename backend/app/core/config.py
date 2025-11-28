@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Authentication Settings
     # ADMIN_USERNAME/PASSWORD/EMAIL removed - enrollment is done via UI on first start
     JWT_SECRET_KEY: str
-    JWT_ALGORITHM: str = "HS256"
+    JWT_ALGORITHM: str = "RS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     SESSION_TIMEOUT_MINUTES: int = 60

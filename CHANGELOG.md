@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-11-27
+
+### Security
+- **Authentication Hardening**: Upgraded password hashing to use `bcrypt` and `argon2` (via `passlib`). Added backward compatibility for existing passwords.
+- **JWT Security**: Switched from Symmetric (HS256) to Asymmetric (RS256) signing for JWT tokens. Keys are automatically generated on startup.
+- **Nginx Hardening**: Disabled server tokens, removed deprecated XSS headers, and implemented a strict Content Security Policy (CSP).
+- **Production Mode**: Added entrypoint script to enforce production settings (no reload, multiple workers) when `ENVIRONMENT=production`.
+- **Database Driver**: Upgraded to `psycopg` (v3) for better performance and security.
+
+### Changed
+- **Docker Configuration**: Removed `user: root` from `docker-compose.yml` to respect Dockerfile user settings (except where necessary).
+
 ### Project Initialization
 - Complete project documentation and architecture
 - Docker Compose configuration
