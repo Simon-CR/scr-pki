@@ -199,6 +199,10 @@ nano .env
 PKI_DOMAIN=pki.homelab.local
 WEB_PORT=443
 
+# Host Validation - Set to your domain(s) to prevent host header injection
+# Comma-separated list of allowed hostnames
+ALLOWED_HOSTS=pki.homelab.local,localhost,127.0.0.1
+
 # Change ALL default passwords
 POSTGRES_PASSWORD=<generate-strong-password>
 ADMIN_PASSWORD=<generate-strong-password>
@@ -208,6 +212,13 @@ VAULT_TOKEN=<will-be-generated-during-init>
 CA_COMMON_NAME=HomeLab Root CA
 CA_ORGANIZATION=Your HomeLab
 CA_COUNTRY=US
+
+# Password Policy (optional - defaults are permissive for home lab)
+# PASSWORD_MIN_LENGTH=8
+# PASSWORD_REQUIRE_UPPERCASE=false
+# PASSWORD_REQUIRE_LOWERCASE=false
+# PASSWORD_REQUIRE_DIGIT=false
+# PASSWORD_REQUIRE_SPECIAL=false
 
 # Email Alerts (optional)
 SMTP_ENABLED=true

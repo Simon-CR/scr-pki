@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { api, apiClient } from '../services/api'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { CAHierarchyResponse, CAInitializeRequest, CertificateAuthority } from '../types'
+import { useConfirmDialog } from '../components/ConfirmDialog'
 
 const KEY_SIZE_OPTIONS = [2048, 3072, 4096]
 const ROOT_MAX_VALIDITY_YEARS = 30
@@ -172,6 +173,7 @@ const getDeleteRestriction = (ca: CertificateAuthority): string | null => {
 }
 
 const Authorities: React.FC = () => {
+  const { confirm } = useConfirmDialog()
   const queryClient = useQueryClient()
   const { data, isLoading, error } = useQuery({
     queryKey: ['ca-hierarchy'],
@@ -248,18 +250,19 @@ const Authorities: React.FC = () => {
       toast.error(getApiErrorMessage(deleteError, 'Unable to delete Certificate Authority'))
     },
   })
-  const handleDeleteAuthority = (ca: CertificateAuthority) => {
+  const handleDeleteAuthority = async (ca: CertificateAuthority) => {
     const restriction = getDeleteRestriction(ca)
     if (restriction) {
       toast.error(restriction)
       return
     }
-    const messageParts = [
-      `Delete ${ca.common_name}?`,
-      'This permanently removes the CA metadata and its private key from Vault.',
-      'Only delete unused intermediates without child CAs or issued certificates.',
-    ]
-    if (window.confirm(messageParts.join('\n\n'))) {
+    const confirmed = await confirm({
+      title: `Delete ${ca.common_name}?`,
+      message: 'This permanently removes the CA metadata and its private key from Vault.\n\nOnly delete unused intermediates without child CAs or issued certificates.',
+      confirmLabel: 'Delete',
+      variant: 'danger'
+    })
+    if (confirmed) {
       deleteMutation.mutate(ca.id)
     }
   }

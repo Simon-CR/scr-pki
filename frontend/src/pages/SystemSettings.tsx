@@ -6,8 +6,11 @@ import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigRes
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell } from 'lucide-react'
+import { tokenStorage } from '../utils/tokenStorage'
+import { useConfirmDialog } from '../components/ConfirmDialog'
 
 const SystemSettings: React.FC = () => {
+  const { confirm } = useConfirmDialog()
   const [isLoading, setIsLoading] = useState(false)
   const queryClient = useQueryClient()
   const [healthLoading, setHealthLoading] = useState(false)
@@ -185,7 +188,13 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleInitializeVault = async () => {
-    if (!confirm('Are you sure you want to initialize Vault? This can only be done once on a fresh installation.')) {
+    const confirmed = await confirm({
+      title: 'Initialize Vault',
+      message: 'Are you sure you want to initialize Vault? This can only be done once on a fresh installation.',
+      confirmLabel: 'Initialize',
+      variant: 'warning'
+    })
+    if (!confirmed) {
       return
     }
     setConfigLoading(true)
@@ -233,7 +242,13 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleResetSystem = async () => {
-    if (!confirm('DANGER: This will delete ALL certificates, CAs, and monitoring data. This action cannot be undone. Are you sure?')) {
+    const confirmed = await confirm({
+      title: 'Reset System',
+      message: 'DANGER: This will delete ALL certificates, CAs, and monitoring data. This action cannot be undone. Are you sure?',
+      confirmLabel: 'Reset System',
+      variant: 'danger'
+    })
+    if (!confirmed) {
       return
     }
     
@@ -289,7 +304,13 @@ const SystemSettings: React.FC = () => {
   }
 
   const onSubmit = async (data: SystemCertRequest) => {
-    if (!confirm('This will overwrite the current system certificate and may require a restart of the application. Continue?')) {
+    const confirmed = await confirm({
+      title: 'Update System Certificate',
+      message: 'This will overwrite the current system certificate and may require a restart of the application. Continue?',
+      confirmLabel: 'Update Certificate',
+      variant: 'warning'
+    })
+    if (!confirmed) {
       return
     }
 
@@ -399,7 +420,13 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleDeleteBackup = async (filename: string) => {
-    if (!confirm(`Are you sure you want to delete backup ${filename}?`)) {
+    const confirmed = await confirm({
+      title: 'Delete Backup',
+      message: `Are you sure you want to delete backup ${filename}?`,
+      confirmLabel: 'Delete',
+      variant: 'danger'
+    })
+    if (!confirmed) {
       return
     }
     try {
@@ -412,16 +439,8 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleDownloadBackup = (filename: string) => {
-    // Direct download link
-    // We need to handle auth token if the API is protected (it is)
-    // For simplicity, we'll use a fetch and blob approach or just window.open if cookie auth is used
-    // Since we use JWT in header, window.open won't work for protected routes easily without a cookie.
-    // But let's assume for now we can use the API client to get a blob.
-    
-    // Actually, let's use the API client to download
-    // But for now, let's just try window.open and see if it works (it won't if auth is header based)
-    // Correct way:
-    const token = localStorage.getItem('token')
+    // Use token from cookie storage for authenticated download
+    const token = tokenStorage.getAccessToken()
     if (!token) {
         toast.error('You must be logged in to download backups')
         return

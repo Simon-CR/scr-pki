@@ -4,7 +4,7 @@ Authentication endpoints for login, logout, and token management.
 
 from datetime import timedelta
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict
@@ -17,8 +17,10 @@ from app.core.auth import (
     create_refresh_token,
     get_current_active_user,
     verify_token,
-    audit_log_auth_event
+    audit_log_auth_event,
+    blacklist_token
 )
+from app.core.rate_limit import limiter, RATE_LIMITS
 from app.models.user import User
 from app.core.config import settings
 
@@ -60,14 +62,18 @@ class LoginResponse(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit(RATE_LIMITS["auth_login"])
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Login endpoint to authenticate user and return JWT tokens.
+    Rate limited to prevent brute force attacks.
     
     Args:
+        request: FastAPI request object (for rate limiting)
         form_data: OAuth2 password form data
         db: Database session
         
@@ -199,16 +205,26 @@ def refresh_token(
 
 
 @router.post("/logout")
-def logout(current_user: User = Depends(get_current_active_user)) -> Any:
+def logout(
+    request: Request,
+    current_user: User = Depends(get_current_active_user)
+) -> Any:
     """
-    Logout endpoint (token invalidation would be handled by client).
+    Logout endpoint - blacklists the current access token.
     
     Args:
+        request: FastAPI request object
         current_user: Current authenticated user
         
     Returns:
         dict: Success message
     """
+    # Extract token from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        blacklist_token(token)
+    
     audit_log_auth_event(current_user.id, "logout", {"username": current_user.username})
     
     return {"message": "Successfully logged out"}

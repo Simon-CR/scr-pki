@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
@@ -6,6 +6,31 @@ import { User, LoginRequest, LoginResponse } from '../types'
 import { authService } from '../services/authService'
 import { tokenStorage } from '../utils/tokenStorage'
 import { api } from '../services/api'
+
+// Session timeout in milliseconds (2 hours default, configurable via localStorage)
+const DEFAULT_SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000 // 2 hours
+const SESSION_TIMEOUT_KEY = 'session_timeout_minutes'
+
+function getSessionTimeoutMs(): number {
+  const stored = localStorage.getItem(SESSION_TIMEOUT_KEY)
+  if (stored) {
+    const minutes = parseInt(stored, 10)
+    if (!isNaN(minutes) && minutes > 0) {
+      return minutes * 60 * 1000
+    }
+  }
+  return DEFAULT_SESSION_TIMEOUT_MS
+}
+
+export function setSessionTimeout(minutes: number): void {
+  if (minutes > 0) {
+    localStorage.setItem(SESSION_TIMEOUT_KEY, minutes.toString())
+  }
+}
+
+export function getSessionTimeoutMinutes(): number {
+  return getSessionTimeoutMs() / 60 / 1000
+}
 
 interface AuthContextType {
   user: User | null
@@ -29,6 +54,37 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const location = useLocation()
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastActivityRef = useRef<number>(Date.now())
+
+  // Reset inactivity timer on user activity
+  const resetInactivityTimer = useCallback(() => {
+    lastActivityRef.current = Date.now()
+  }, [])
+
+  // Set up inactivity timeout
+  useEffect(() => {
+    if (!user) return
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart']
+    events.forEach(event => window.addEventListener(event, resetInactivityTimer))
+
+    // Check for inactivity every minute
+    inactivityTimerRef.current = setInterval(() => {
+      const inactiveTime = Date.now() - lastActivityRef.current
+      if (inactiveTime > getSessionTimeoutMs()) {
+        toast.error('Session expired due to inactivity')
+        logout()
+      }
+    }, 60000) // Check every minute
+
+    return () => {
+      events.forEach(event => window.removeEventListener(event, resetInactivityTimer))
+      if (inactivityTimerRef.current) {
+        clearInterval(inactivityTimerRef.current)
+      }
+    }
+  }, [user, resetInactivityTimer])
 
   // Check authentication status on mount
   useEffect(() => {

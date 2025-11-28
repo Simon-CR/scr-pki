@@ -12,6 +12,9 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt,argon2]==1.7.4
 python-multipart==0.0.6
 
+# Rate limiting
+slowapi==0.1.9
+
 # PKI and cryptography
 cryptography==41.0.7
 hvac==2.0.0

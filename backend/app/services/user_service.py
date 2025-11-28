@@ -5,14 +5,29 @@ User service for user management operations.
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional, Protocol
 import structlog
 
 from app.models.user import User, UserRole
 from app.core.auth import get_password_hash
 from app.core.config import settings
+from app.core.password_validator import validate_password, get_password_requirements_message
 
 logger = structlog.get_logger(__name__)
+
+
+class UserCreateInput(Protocol):
+    """Protocol for user creation input data."""
+    username: str
+    email: str
+    password: str
+    full_name: Optional[str]
+    role: UserRole
+
+
+class UserUpdateInput(Protocol):
+    """Protocol for user update input data."""
+    def dict(self, *, exclude_unset: bool = False) -> dict: ...
 
 
 async def create_default_admin():
@@ -58,7 +73,7 @@ async def create_default_admin():
     #     db.rollback()
     #     logger.error("Failed to create default admin user", error=str(e))
 
-def create_user(db: Session, user_in: Any) -> User:
+def create_user(db: Session, user_in: UserCreateInput) -> User:
     """Create a new user."""
     # Check if username exists
     if db.query(User).filter(User.username == user_in.username).first():
@@ -67,6 +82,11 @@ def create_user(db: Session, user_in: Any) -> User:
     # Check if email exists
     if db.query(User).filter(User.email == user_in.email).first():
         raise ValueError("Email already registered")
+    
+    # Validate password complexity
+    is_valid, errors = validate_password(user_in.password)
+    if not is_valid:
+        raise ValueError(f"Password does not meet requirements: {'; '.join(errors)}. {get_password_requirements_message()}")
     
     user = User(
         username=user_in.username,
@@ -82,7 +102,7 @@ def create_user(db: Session, user_in: Any) -> User:
     db.refresh(user)
     return user
 
-def update_user(db: Session, user_id: int, user_in: Any) -> Optional[User]:
+def update_user(db: Session, user_id: int, user_in: UserUpdateInput) -> Optional[User]:
     """Update a user."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -101,6 +121,10 @@ def update_user(db: Session, user_id: int, user_in: Any) -> Optional[User]:
             raise ValueError("Email already registered")
 
     if "password" in update_data:
+        # Validate password complexity when changing password
+        is_valid, errors = validate_password(update_data["password"])
+        if not is_valid:
+            raise ValueError(f"Password does not meet requirements: {'; '.join(errors)}. {get_password_requirements_message()}")
         update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
     
     for field, value in update_data.items():

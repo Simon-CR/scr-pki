@@ -6,7 +6,7 @@ from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Enum, F
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.database import Base
 
@@ -136,7 +136,7 @@ class MonitoringService(Base):
     def update_statistics(self, check_result: CheckResult, duration: float):
         """Update service statistics after a health check."""
         self.total_checks += 1
-        self.last_check_at = datetime.utcnow()
+        self.last_check_at = datetime.now(timezone.utc)
         self.last_check_result = check_result
         self.last_check_duration = duration
         
@@ -169,7 +169,7 @@ class MonitoringService(Base):
         if not self.last_check_at:
             return True
             
-        time_since_last_check = datetime.utcnow() - self.last_check_at
+        time_since_last_check = datetime.now(timezone.utc) - self.last_check_at
         return time_since_last_check.total_seconds() >= self.check_interval
 
 

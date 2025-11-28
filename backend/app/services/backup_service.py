@@ -8,7 +8,11 @@ from typing import List, Dict, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+import structlog
 from app.core.config import settings
+
+logger = structlog.get_logger(__name__)
+
 
 class BackupService:
     BACKUP_DIR = "/app/backups"
@@ -115,9 +119,11 @@ class BackupService:
             }
             
         except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"Database dump failed: {str(e)}")
+            logger.error("Database dump failed during backup", error=str(e), exit_code=e.returncode)
+            raise HTTPException(status_code=500, detail="Backup failed: database export error. Check server logs.")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+            logger.error("Backup failed", error=str(e), error_type=type(e).__name__)
+            raise HTTPException(status_code=500, detail="Backup failed. Check server logs for details.")
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
@@ -234,7 +240,8 @@ class BackupService:
             return {"message": "Restore completed successfully"}
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
+            logger.error("Restore failed", error=str(e), error_type=type(e).__name__, filename=filename)
+            raise HTTPException(status_code=500, detail="Restore failed. Check server logs for details.")
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)

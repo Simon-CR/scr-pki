@@ -122,7 +122,7 @@ async def acknowledge_alert(
     ack = AlertAcknowledgment(
         alert_key=alert_key,
         acknowledged_by_id=current_user.id,
-        acknowledged_at=datetime.utcnow()
+        acknowledged_at=datetime.now(timezone.utc)
     )
     db.add(ack)
     db.commit()

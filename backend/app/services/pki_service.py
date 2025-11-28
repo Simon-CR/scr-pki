@@ -2,7 +2,7 @@
 PKI core operations for certificate generation, signing, and management.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -102,7 +102,7 @@ class PKIService:
         subject = x509.Name(subject_components)
         
         # Create certificate
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cert_builder = x509.CertificateBuilder()
         cert_builder = cert_builder.subject_name(subject)
         cert_builder = cert_builder.issuer_name(subject)  # Self-signed
@@ -191,7 +191,7 @@ class PKIService:
             subject_components.append(x509.NameAttribute(NameOID.EMAIL_ADDRESS, email))
 
         subject = x509.Name(subject_components)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Calculate validity
         not_valid_after = now + timedelta(days=validity_days)
@@ -299,7 +299,7 @@ class PKIService:
         ])
         
         # Create certificate
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Calculate validity
         not_valid_after = now + timedelta(days=validity_days)
@@ -419,7 +419,7 @@ class PKIService:
         if revoked_certificates is None:
             revoked_certificates = []
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         next_update = now + timedelta(days=7)  # CRL valid for 7 days
         
         builder = x509.CertificateRevocationListBuilder()
@@ -469,7 +469,7 @@ class PKIService:
             )
             
             # Check validity period
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if now < cert.not_valid_before or now > cert.not_valid_after:
                 logger.warning("Certificate is outside validity period", 
                              serial_number=cert.serial_number)

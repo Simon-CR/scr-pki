@@ -2,7 +2,7 @@
 Scheduler service for running background tasks.
 """
 import structlog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -91,7 +91,7 @@ class SchedulerService:
                     result = verify_remote_certificate(cert)
                     
                     # Update monitoring record
-                    monitor.last_check_at = datetime.utcnow()
+                    monitor.last_check_at = datetime.now(timezone.utc)
                     monitor.total_checks += 1
                     
                     error = result.get("verification_error")
@@ -151,19 +151,19 @@ class SchedulerService:
             
             days_threshold = int(threshold_config.value) if threshold_config else 30
             
-            warning_date = datetime.utcnow() + timedelta(days=days_threshold)
+            warning_date = datetime.now(timezone.utc) + timedelta(days=days_threshold)
             
             # Find valid certificates expiring soon
             expiring_certs = db.query(Certificate).filter(
                 Certificate.status == CertificateStatus.VALID,
                 Certificate.not_valid_after <= warning_date,
-                Certificate.not_valid_after > datetime.utcnow() # Not already expired
+                Certificate.not_valid_after > datetime.now(timezone.utc) # Not already expired
             ).all()
             
             logger.info(f"Found {len(expiring_certs)} expiring certificates")
             
             for cert in expiring_certs:
-                days_remaining = (cert.not_valid_after - datetime.utcnow()).days
+                days_remaining = (cert.not_valid_after - datetime.now(timezone.utc)).days
                 logger.info("Sending expiration alert", 
                           cert_id=cert.id, 
                           days_remaining=days_remaining)

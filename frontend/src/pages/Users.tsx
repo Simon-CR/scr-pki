@@ -4,6 +4,7 @@ import { api, getApiErrorMessage } from '../services/api'
 import LoadingSpinner from '../components/LoadingSpinner'
 import toast from 'react-hot-toast'
 import { User, UserRole } from '../types'
+import { useConfirmDialog } from '../components/ConfirmDialog'
 
 interface UserCreate {
   username: string
@@ -23,6 +24,7 @@ interface UserUpdate {
 }
 
 const Users: React.FC = () => {
+  const { confirm } = useConfirmDialog()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const queryClient = useQueryClient()
@@ -147,8 +149,14 @@ const Users: React.FC = () => {
                     Edit
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm('Are you sure you want to delete this user?')) {
+                    onClick={async () => {
+                      const confirmed = await confirm({
+                        title: 'Delete User',
+                        message: 'Are you sure you want to delete this user?',
+                        confirmLabel: 'Delete',
+                        variant: 'danger'
+                      })
+                      if (confirmed) {
                         deleteMutation.mutate(user.id)
                       }
                     }}

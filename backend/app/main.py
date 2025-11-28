@@ -13,10 +13,12 @@ Main Features:
 - JWT-based authentication with RBAC
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 import structlog
 import time
@@ -25,6 +27,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import engine, init_db
 from app.core.vault import vault_client
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.api.v1.api import api_router
 from app.core.auth import get_current_user
 from app.services.user_service import create_default_admin
@@ -60,6 +63,20 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting SCR-PKI API")
+    
+    # Security warning for AUTH_DISABLED
+    if settings.AUTH_DISABLED:
+        logger.critical(
+            "⚠️  SECURITY WARNING: AUTH_DISABLED=true - Authentication is completely bypassed! "
+            "All requests will be treated as admin. DO NOT use in production!"
+        )
+        # Log to stderr as well for visibility
+        import sys
+        print("\n" + "="*80, file=sys.stderr)
+        print("⚠️  CRITICAL SECURITY WARNING ⚠️", file=sys.stderr)
+        print("AUTH_DISABLED=true is set - ALL AUTHENTICATION IS BYPASSED!", file=sys.stderr)
+        print("Every request has full admin access. This is for development only.", file=sys.stderr)
+        print("="*80 + "\n", file=sys.stderr)
     
     # Initialize database
     # Note: In production with multiple workers, this is handled by pre_start.py
@@ -113,6 +130,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
@@ -135,12 +156,22 @@ else:
 
 
 @app.middleware("http")
-async def add_process_time_header(request, call_next):
-    """Add request processing time to response headers."""
+async def add_security_headers(request, call_next):
+    """Add security headers to API responses (supplementary to nginx headers)."""
     start_time = time.time()
     response = await call_next(request)
     process_time = time.time() - start_time
+    
+    # Process time header
     response.headers["X-Process-Time"] = str(process_time)
+    
+    # Security headers (backup for direct API access, nginx handles these for proxied requests)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    # X-XSS-Protection is deprecated and can cause issues; modern browsers use CSP instead
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    
     return response
 
 
@@ -175,9 +206,11 @@ async def log_requests(request, call_next):
 
 # Health check endpoint
 @app.get("/health")
-async def health_check():
+@limiter.limit("60/minute")
+async def health_check(request: Request):
     """
     Health check endpoint for load balancers and monitoring.
+    Rate limited to prevent abuse.
     
     Returns:
         dict: Health status and system information

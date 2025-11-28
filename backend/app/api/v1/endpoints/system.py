@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.core.auth import require_admin
+from app.core.rate_limit import limiter, RATE_LIMITS
 from app.services.certificate_service import CertificateService
 from app.services.ca_service import ca_service
 from app.models.certificate import CertificateType
@@ -252,10 +253,10 @@ def update_system_certificate(
         }
         
     except Exception as e:
-        logger.error("Failed to update system certificate", error=str(e))
+        logger.error("Failed to update system certificate", error=str(e), error_type=type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update system certificate: {str(e)}"
+            detail="Failed to update system certificate. Check server logs for details."
         )
 
 class SystemHealthResponse(BaseModel):
@@ -269,13 +270,16 @@ class SystemHealthResponse(BaseModel):
     orphaned_keys: List[str] = []
 
 @router.get("/health", response_model=SystemHealthResponse)
+@limiter.limit(RATE_LIMITS["health"])
 def check_system_health(
+    request: Request,
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
 ):
     """
     Perform a system health check, verifying Database and Vault connectivity,
     and checking for data integrity (missing keys and orphaned keys).
+    Rate limited to prevent abuse.
     """
     health = SystemHealthResponse(
         database_connected=True,
@@ -467,11 +471,13 @@ def unseal_vault(
         vault_client.connect()
         
         return {"message": "Vault unsealed successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Failed to unseal Vault", error=str(e))
+        logger.error("Failed to unseal Vault", error=str(e), error_type=type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to unseal Vault: {str(e)}"
+            detail="Failed to unseal Vault. Check server logs for details."
         )
 
 class VaultInitResponse(BaseModel):
@@ -526,11 +532,13 @@ def initialize_vault(
             message="Vault initialized successfully! SAVE THESE KEYS IMMEDIATELY. They will not be shown again."
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Failed to initialize Vault", error=str(e))
+        logger.error("Failed to initialize Vault", error=str(e), error_type=type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initialize Vault: {str(e)}"
+            detail="Failed to initialize Vault. Check server logs for details."
         )
 
 @router.post("/reset", status_code=status.HTTP_200_OK)
@@ -724,10 +732,12 @@ def reset_system(
         
         return {"message": msg}
         
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        logger.error("System reset failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("System reset failed", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail="System reset failed. Check server logs for details.")
 
 class BackupResponse(BaseModel):
     filename: str
@@ -944,8 +954,8 @@ def send_test_slack(
         return {"message": "Test Slack notification sent successfully"}
         
     except Exception as e:
-        logger.error("Failed to send Slack test", error=str(e))
-        raise HTTPException(status_code=400, detail=f"Failed to send Slack notification: {str(e)}")
+        logger.error("Failed to send Slack test", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=400, detail="Failed to send Slack notification. Check webhook URL and server logs.")
 
 @router.post("/settings/test-discord", status_code=status.HTTP_200_OK)
 def send_test_discord(
@@ -970,8 +980,8 @@ def send_test_discord(
         return {"message": "Test Discord notification sent successfully"}
         
     except Exception as e:
-        logger.error("Failed to send Discord test", error=str(e))
-        raise HTTPException(status_code=400, detail=f"Failed to send Discord notification: {str(e)}")
+        logger.error("Failed to send Discord test", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=400, detail="Failed to send Discord notification. Check webhook URL and server logs.")
 
 @router.post("/settings/test-email", status_code=status.HTTP_200_OK)
 def send_test_email(
@@ -1028,8 +1038,8 @@ def send_test_email(
         return {"message": f"Test email sent successfully to {request.to_email}"}
         
     except Exception as e:
-        logger.error("Failed to send test email", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
+        logger.error("Failed to send test email", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail="Failed to send email. Check SMTP settings and server logs.")
 
 @router.get("/settings", response_model=AlertSettings)
 def get_alert_settings(

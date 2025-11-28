@@ -5,7 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.4] - 2025-11-28
+
+### Security
+- **Rate Limiting**: Added rate limiting on authentication endpoints using `slowapi` to prevent brute force attacks.
+- **Token Blacklist**: Implemented token blacklist for proper logout functionality. Tokens are now invalidated on logout.
+- **Setup Race Condition**: Fixed race condition in initial setup endpoint using PostgreSQL advisory locks.
+- **Error Sanitization**: Sanitized error messages to prevent information disclosure. Detailed errors are logged internally.
+- **AUTH_DISABLED Warning**: Added prominent startup warnings and documentation for dangerous `AUTH_DISABLED` setting.
+- **Source Maps Disabled**: Production builds no longer include source maps to prevent code exposure.
+- **Server Tokens Disabled**: Added `server_tokens off` to nginx configuration.
+- **CSP Cleanup**: Removed duplicate Content-Security-Policy headers from nginx config.
+- **Network Segmentation**: Made `vault-net` internal-only for improved network isolation.
+- **ALLOWED_HOSTS**: Changed from wildcard to configurable via environment variable. Documented best practices.
+- **Security Headers**: Added security headers middleware to backend (X-Content-Type-Options, X-Frame-Options, Cache-Control).
+- **Health Rate Limiting**: Added rate limiting to health check endpoints.
+
+### Fixed
+- **Deprecated datetime.utcnow()**: Replaced all deprecated `datetime.utcnow()` calls with timezone-aware `datetime.now(timezone.utc)`.
+- **Token Storage Consistency**: Fixed inconsistent token retrieval in SystemSettings to use `tokenStorage` utility.
+
+### Changed
+- **Confirmation Dialogs**: Replaced native browser `confirm()` dialogs with custom styled modal dialogs for better UX.
+
+### Added
+- **ConfirmDialog Component**: Added reusable confirmation dialog component with danger/warning/info variants.
+- **Error Handling Utility**: Added centralized error handling utility for consistent secure error responses.
+- **Password Complexity**: Configurable password complexity validation (min length, uppercase, lowercase, digit, special).
+- **Session Timeout**: Frontend session timeout with configurable inactivity period (default 2 hours).
+- **Password Requirements API**: New `/api/v1/setup/password-requirements` endpoint to retrieve current password policy.
+- **Type Hints**: Added proper type hints using Protocol types in user service.
+
+### Documentation
+- **AppArmor**: Documented AppArmor configuration and why containers run unconfined.
+- **Docker Socket**: Enhanced documentation for Docker socket security and alternatives.
+- **Password Policy**: Documented configurable password policy settings in deployment guide.
 
 ## [0.2.3] - 2025-11-28
 

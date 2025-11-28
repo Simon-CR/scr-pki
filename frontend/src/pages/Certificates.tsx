@@ -4,6 +4,7 @@ import { api, apiClient, getApiErrorMessage } from '../services/api'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { Certificate } from '../types'
 import toast from 'react-hot-toast'
+import { useConfirmDialog } from '../components/ConfirmDialog'
 
 interface CertificateFilters {
   status: string
@@ -97,6 +98,7 @@ const getYearPresetFromDays = (days: number): string => {
 }
 
 const Certificates: React.FC = () => {
+  const { confirm } = useConfirmDialog()
   const monitoringAutoUrlRef = useRef('')
   const [filters, setFilters] = useState<CertificateFilters>({
     status: 'all',
@@ -451,7 +453,13 @@ const Certificates: React.FC = () => {
   }
 
   const handleRevoke = async (certificateId: string) => {
-    if (window.confirm('Are you sure you want to revoke this certificate?')) {
+    const confirmed = await confirm({
+      title: 'Revoke Certificate',
+      message: 'Are you sure you want to revoke this certificate? This action cannot be undone.',
+      confirmLabel: 'Revoke',
+      variant: 'danger'
+    })
+    if (confirmed) {
       try {
         await revokeMutation.mutateAsync(certificateId)
       } catch (error) {
@@ -474,7 +482,13 @@ const Certificates: React.FC = () => {
       return
     }
 
-    if (window.confirm('This will permanently delete the certificate record. Continue?')) {
+    const confirmed = await confirm({
+      title: 'Delete Certificate',
+      message: 'This will permanently delete the certificate record. Continue?',
+      confirmLabel: 'Delete',
+      variant: 'danger'
+    })
+    if (confirmed) {
       try {
         await deleteMutation.mutateAsync(certificateId)
       } catch (error) {

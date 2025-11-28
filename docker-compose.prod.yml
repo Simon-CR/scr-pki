@@ -59,7 +59,9 @@ services:
       
       # Security
       - SECRET_KEY=${JWT_SECRET_KEY}
-      - ALLOWED_HOSTS=["*"]
+      # ALLOWED_HOSTS: Set to your domain(s) for production
+      # Example: ALLOWED_HOSTS=pki.example.com,pki.local,localhost
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,backend,pki_backend}
       
       # Database
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}

@@ -224,6 +224,36 @@ vault policy write pki-backend pki-backend-policy.hcl
 
 ## Authentication & Authorization
 
+### ⚠️ Critical Security Setting: AUTH_DISABLED
+
+> **WARNING**: The `AUTH_DISABLED` environment variable completely bypasses all authentication 
+> and authorization checks when set to `true`. This is an extremely dangerous setting that 
+> should NEVER be used in production environments.
+
+**When AUTH_DISABLED=true:**
+- All API requests bypass authentication
+- All requests are treated as having full admin privileges
+- No user verification or token validation occurs
+- Complete audit trail is compromised
+
+**Appropriate Use Cases:**
+- Local development only
+- Isolated test environments
+- Initial debugging during setup
+
+**Production Safeguards:**
+- Default value is `false`
+- A critical warning is logged at startup if enabled
+- A warning banner is printed to stderr
+
+**To ensure this is disabled:**
+```bash
+# In docker-compose.yml or .env file
+AUTH_DISABLED=false
+
+# Or simply remove the variable (defaults to false)
+```
+
 ### User Authentication
 
 **Supported Methods:**

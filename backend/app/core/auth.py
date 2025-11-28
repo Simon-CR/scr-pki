@@ -2,9 +2,10 @@
 Authentication and authorization module using JWT tokens.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 import os
+import uuid
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -20,6 +21,7 @@ import structlog
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User, UserRole
+from app.core.token_blacklist import token_blacklist
 
 logger = structlog.get_logger(__name__)
 
@@ -156,11 +158,16 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    to_encode.update({"exp": expire})
+    # Add unique token ID for blacklist support
+    to_encode.update({
+        "exp": expire,
+        "jti": str(uuid.uuid4()),
+        "type": "access"
+    })
     # Use RS256 with private key
     encoded_jwt = jwt.encode(to_encode, get_signing_key(), algorithm="RS256")
     return encoded_jwt
@@ -177,8 +184,13 @@ def create_refresh_token(data: dict) -> str:
         str: JWT refresh token
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    # Add unique token ID for blacklist support
+    to_encode.update({
+        "exp": expire,
+        "jti": str(uuid.uuid4()),
+        "type": "refresh"
+    })
     # Use RS256 with private key
     encoded_jwt = jwt.encode(to_encode, get_signing_key(), algorithm="RS256")
     return encoded_jwt
@@ -197,10 +209,42 @@ def verify_token(token: str) -> Optional[dict]:
     try:
         # Use RS256 with public key
         payload = jwt.decode(token, get_verification_key(), algorithms=["RS256"])
+        
+        # Check if token is blacklisted
+        jti = payload.get("jti")
+        if jti and token_blacklist.is_blacklisted(jti):
+            logger.warning("Attempt to use blacklisted token", jti=jti)
+            return None
+            
         return payload
     except JWTError as e:
         logger.error("JWT verification failed", error=str(e))
         return None
+
+
+def blacklist_token(token: str) -> bool:
+    """
+    Add a token to the blacklist.
+    
+    Args:
+        token: JWT token to blacklist
+        
+    Returns:
+        bool: True if successfully blacklisted
+    """
+    try:
+        payload = jwt.decode(token, get_verification_key(), algorithms=["RS256"])
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        
+        if jti and exp:
+            # Convert exp timestamp to datetime
+            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+            token_blacklist.add(jti, expires_at)
+            return True
+        return False
+    except JWTError:
+        return False
 
 
 def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
@@ -233,7 +277,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
         return None
     
     # Update last login
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     db.commit()
     
     logger.info("User authenticated successfully", username=username, user_id=user.id)
@@ -418,5 +462,5 @@ def audit_log_auth_event(user_id: Optional[int], event: str, details: dict = Non
         user_id=user_id,
         event_type=event,
         details=details or {},
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )

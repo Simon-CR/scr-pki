@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
     SECRET_KEY: str
     LOG_LEVEL: str = "INFO"
+    
+    # ⚠️ SECURITY WARNING: AUTH_DISABLED
+    # When set to True, ALL authentication is bypassed and every request
+    # is treated as a fully privileged admin user. This is extremely dangerous
+    # and should ONLY be used for local development or testing.
+    # NEVER enable this in production environments!
     AUTH_DISABLED: bool = False
     
     # Web Interface Settings
@@ -69,6 +75,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_IP_HOUR: int = 100
     RATE_LIMIT_PER_USER_HOUR: int = 500
     RATE_LIMIT_CERT_ISSUE_HOUR: int = 10
+    
+    # Password Policy (configurable for home lab flexibility)
+    # Set these via environment variables to enforce stricter requirements
+    PASSWORD_MIN_LENGTH: int = 8
+    PASSWORD_REQUIRE_UPPERCASE: bool = False
+    PASSWORD_REQUIRE_LOWERCASE: bool = False
+    PASSWORD_REQUIRE_DIGIT: bool = False
+    PASSWORD_REQUIRE_SPECIAL: bool = False
     
     # CORS and Security
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "https://localhost", "https://127.0.0.1", "http://127.0.0.1:3000"]

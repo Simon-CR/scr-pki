@@ -245,3 +245,4 @@ networks:
     internal: true
   vault-net:
     driver: bridge
+    internal: true  # Vault network is internal-only for security
