@@ -4,8 +4,8 @@ services:
     image: simonclr/scr-pki-nginx:latest
     container_name: pki_nginx
     ports:
-      - "9443:443"
-      - "9080:80"
+      - "443:443"
+      - "80:80"
     volumes:
       - ssl_data:/etc/nginx/ssl
       - ./data/logs/nginx:/var/log/nginx
@@ -140,7 +140,7 @@ services:
 
   # HashiCorp Vault
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.21.1
     container_name: pki_vault
     environment:
       - VAULT_ADDR=http://127.0.0.1:8200

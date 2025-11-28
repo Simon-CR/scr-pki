@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Development and deployment guides
 - Security framework and best practices
 
+## [0.2.0] - 2025-11-27
+
+### Added
+- **Background Scheduler**: Implemented `APScheduler` to run periodic tasks (monitoring checks, expiration alerts).
+- **Alert Acknowledgment**: Added ability to acknowledge alerts in the UI.
+- **DockerHub Integration**: Version check now verifies if the Docker image is available on DockerHub.
+- **SMTP Security**: Masked SMTP password in system settings API response.
+
+### Changed
+- **ACME Removal**: Completely removed ACME protocol support to focus on internal PKI use cases.
+- **Documentation**: Updated Roadmap and QA Gaps to reflect current state.
+
 ## [0.1.0] - 2025-11-27
 
 ### Added

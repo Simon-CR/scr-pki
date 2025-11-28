@@ -158,7 +158,7 @@ services:
 
   # HashiCorp Vault
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.21.1
     container_name: pki_vault
     environment:
       - VAULT_ADDR=http://127.0.0.1:8200

@@ -69,8 +69,7 @@ async def init_db():
     """
     try:
         # Import all models to ensure they are registered
-        from app.models import certificate, user, ca, monitoring, system
-        # Temporarily disabled: alert
+        from app.models import certificate, user, ca, monitoring, system, alert
         
         # Create all tables
         Base.metadata.create_all(bind=engine)

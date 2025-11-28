@@ -28,6 +28,7 @@ from app.core.vault import vault_client
 from app.api.v1.api import api_router
 from app.core.auth import get_current_user
 from app.services.user_service import create_default_admin
+from app.services.scheduler import scheduler_service
 
 # Configure structured logging
 structlog.configure(
@@ -81,11 +82,17 @@ async def lifespan(app: FastAPI):
             logger.warning("Vault authentication failed - System requires configuration")
     else:
         logger.info("Vault connection established")
+    
+    # Start scheduler
+    scheduler_service.start()
+    logger.info("Scheduler started")
+
     logger.info("SCR-PKI API started successfully")
     
     yield
     
     # Shutdown
+    scheduler_service.stop()
     logger.info("Shutting down SCR-PKI API")
 
 

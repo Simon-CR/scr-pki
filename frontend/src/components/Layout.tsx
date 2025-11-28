@@ -8,13 +8,14 @@ interface LayoutProps {
   children: React.ReactNode
 }
 
-const APP_VERSION = '0.1.0'
+const APP_VERSION = '0.2.0'
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { user, logout, loading } = useAuth()
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [latestVersion, setLatestVersion] = useState('')
   const [releaseUrl, setReleaseUrl] = useState('')
+  const [dockerAvailable, setDockerAvailable] = useState(false)
 
   useEffect(() => {
     const checkUpdate = async () => {
@@ -24,6 +25,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           setUpdateAvailable(true)
           setLatestVersion(data.latest_version)
           setReleaseUrl(data.release_url || '#')
+          setDockerAvailable(data.docker_image_available || false)
         }
       } catch (error) {
         console.error('Failed to check version:', error)
@@ -146,9 +148,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
                   </svg>
                 </span>
-                <p className="ml-3 font-medium text-white truncate">
+                <p className="font-medium text-white truncate">
                   <span className="md:hidden">New version available!</span>
-                  <span className="hidden md:inline">New version {latestVersion} is available!</span>
+                  <span className="hidden md:inline">
+                    New version {latestVersion} is available!
+                    {dockerAvailable && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                        Docker Image Ready
+                      </span>
+                    )}
+                  </span>
                 </p>
               </div>
               <div className="order-3 mt-2 flex-shrink-0 w-full sm:order-2 sm:mt-0 sm:w-auto">

@@ -37,7 +37,7 @@ const SystemSettings: React.FC = () => {
   const [testSlackLoading, setTestSlackLoading] = useState(false)
   const [testDiscordLoading, setTestDiscordLoading] = useState(false)
   
-  const { register, handleSubmit, formState: { errors } } = useForm<SystemCertRequest>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
       common_name: window.location.hostname,
       subject_alt_names: '',
@@ -59,9 +59,22 @@ const SystemSettings: React.FC = () => {
       onCheckHealth(true)
       loadBackups()
       loadAlertSettings()
+      loadSystemCertificate()
     }
     init()
   }, [])
+
+  const loadSystemCertificate = async () => {
+    try {
+      const cert = await systemService.getSystemCertificate()
+      if (cert.common_name) {
+        setValue('common_name', cert.common_name)
+        setValue('subject_alt_names', cert.subject_alt_names)
+      }
+    } catch (error) {
+      console.error('Failed to load system certificate', error)
+    }
+  }
 
   const loadAlertSettings = async () => {
     try {
@@ -830,17 +843,17 @@ const SystemSettings: React.FC = () => {
                   </div>
                   
                   <div className="sm:col-span-2">
-                    <dt className="text-sm font-medium text-gray-500">Integrity Check</dt>
+                    <dt className="text-sm font-medium text-gray-500">Key Integrity (Database &rarr; Vault)</dt>
                     <dd className="mt-1 text-sm text-gray-900">
                       {!healthData.vault_connected || !healthData.vault_initialized || healthData.vault_sealed ? (
                         <div className="flex items-center text-yellow-700">
                           <AlertTriangle className="h-5 w-5 mr-2" />
-                          Cannot verify integrity: Vault is not available.
+                          Cannot verify: Vault unavailable.
                         </div>
                       ) : healthData.missing_keys.length === 0 ? (
                         <div className="flex items-center text-green-700">
                           <CheckCircle className="h-5 w-5 mr-2" />
-                          All records have valid private keys in Vault.
+                          All database records have corresponding keys in Vault.
                         </div>
                       ) : (
                         <div className="bg-red-50 p-3 rounded-md">
@@ -848,11 +861,43 @@ const SystemSettings: React.FC = () => {
                             <XCircle className="h-5 w-5 mr-2" />
                             Found {healthData.missing_keys.length} missing keys:
                           </div>
-                          <ul className="list-disc list-inside text-sm text-red-600">
+                          <ul className="list-disc list-inside text-sm text-red-600 max-h-40 overflow-y-auto">
                             {healthData.missing_keys.map((key, idx) => (
                               <li key={idx}>{key}</li>
                             ))}
                           </ul>
+                        </div>
+                      )}
+                    </dd>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <dt className="text-sm font-medium text-gray-500">Orphaned Keys (Vault &rarr; Database)</dt>
+                    <dd className="mt-1 text-sm text-gray-900">
+                      {!healthData.vault_connected || !healthData.vault_initialized || healthData.vault_sealed ? (
+                        <div className="flex items-center text-yellow-700">
+                          <AlertTriangle className="h-5 w-5 mr-2" />
+                          Cannot verify: Vault unavailable.
+                        </div>
+                      ) : !healthData.orphaned_keys || healthData.orphaned_keys.length === 0 ? (
+                        <div className="flex items-center text-green-700">
+                          <CheckCircle className="h-5 w-5 mr-2" />
+                          No orphaned keys found in Vault.
+                        </div>
+                      ) : (
+                        <div className="bg-yellow-50 p-3 rounded-md">
+                          <div className="flex items-center text-yellow-700 mb-2">
+                            <AlertTriangle className="h-5 w-5 mr-2" />
+                            Found {healthData.orphaned_keys.length} orphaned keys:
+                          </div>
+                          <ul className="list-disc list-inside text-sm text-yellow-600 max-h-40 overflow-y-auto">
+                            {healthData.orphaned_keys.map((key, idx) => (
+                              <li key={idx}>{key}</li>
+                            ))}
+                          </ul>
+                          <p className="mt-2 text-xs text-yellow-600">
+                            These keys exist in Vault but are not linked to any record in the database.
+                          </p>
                         </div>
                       )}
                     </dd>

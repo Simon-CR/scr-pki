@@ -103,16 +103,19 @@ class CAIntermediateImportRequest(BaseModel):
     is_offline: bool = False
 
 
-class ACMEConfig(BaseModel):
-    """ACME configuration model."""
-    enabled: bool
-    directory_url: str
-    external_host: str
+@router.get("/root/download")
+async def download_root_ca_public(
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download Root CA certificate (public endpoint)."""
+    ca = ca_service.get_root_ca(db)
+    if not ca:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Root CA not found")
 
-
-class ACMEUpdate(BaseModel):
-    """ACME update model."""
-    external_host: str = Field(..., description="The external base URL of the Vault server (e.g., http://192.168.1.50:8200)")
+    filename = f"{ca.common_name.replace(' ', '_')}.crt"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    
+    return Response(content=ca.pem_certificate, media_type="application/x-pem-file", headers=headers)
 
 
 @router.get("/info", response_model=CAHierarchyResponse)
@@ -291,27 +294,7 @@ async def delete_ca(
         logger.error("Failed to delete CA", ca_id=ca_id, error=str(exc))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    logger.info("Certificate Authority deleted via API", ca_id=ca_id, user_id=current_user.id)
+        logger.info("Certificate Authority deleted via API", ca_id=ca_id, user_id=current_user.id)
 
 
-@router.get("/acme/config", response_model=ACMEConfig)
-def get_acme_config(
-    current_user: User = Depends(require_admin),
-):
-    """Get current ACME configuration."""
-    return ca_service.get_acme_config()
 
-
-@router.post("/acme/config", response_model=ACMEConfig)
-def update_acme_config(
-    config: ACMEUpdate,
-    current_user: User = Depends(require_admin),
-):
-    """Update ACME configuration."""
-    try:
-        return ca_service.update_acme_config(config.external_host)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update ACME config: {str(e)}"
-        )

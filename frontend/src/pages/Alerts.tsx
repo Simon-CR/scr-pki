@@ -42,6 +42,15 @@ const Alerts: React.FC = () => {
     }
   }
 
+  const handleAcknowledge = async (alert: Alert) => {
+    try {
+      await api.post(`/alerts/${alert.id}/acknowledge`)
+      await queryClient.invalidateQueries({ queryKey: ['alerts'] })
+    } catch (error) {
+      console.error('Failed to acknowledge alert', error)
+    }
+  }
+
   const getSeverityColor = (severity: string) => {
     switch (severity.toLowerCase()) {
       case 'critical':
@@ -234,6 +243,14 @@ const Alerts: React.FC = () => {
                           ) : (
                             'Re-test'
                           )}
+                        </button>
+                      )}
+                      {alert.status === 'active' && (
+                        <button
+                          onClick={() => handleAcknowledge(alert)}
+                          className="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-yellow-700 bg-yellow-100 hover:bg-yellow-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+                        >
+                          Acknowledge
                         </button>
                       )}
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(alert.status)}`}>

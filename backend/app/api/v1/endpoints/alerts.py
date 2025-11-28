@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models.certificate import Certificate, CertificateStatus
 from app.models.monitoring import CheckResult
 from app.models.user import User
+from app.models.alert import AlertAcknowledgment
 
 logger = structlog.get_logger(__name__)
 
@@ -58,10 +59,16 @@ async def list_alerts(
         .all()
     )
 
-    _append_expired_certificate_alerts(alerts, expired_certs, active_certs)
-    _append_expiring_certificate_alerts(alerts, active_certs)
-    _append_revoked_certificate_alerts(alerts, revoked_certs)
-    _append_monitoring_alerts(alerts, monitored_certs)
+    # Fetch acknowledgments
+    acknowledgments = {
+        ack.alert_key: ack 
+        for ack in db.query(AlertAcknowledgment).all()
+    }
+
+    _append_expired_certificate_alerts(alerts, expired_certs, active_certs, acknowledgments)
+    _append_expiring_certificate_alerts(alerts, active_certs, acknowledgments)
+    _append_revoked_certificate_alerts(alerts, revoked_certs, acknowledgments)
+    _append_monitoring_alerts(alerts, monitored_certs, acknowledgments)
 
     alerts.sort(key=lambda item: item["created_at"], reverse=True)
 
@@ -83,11 +90,46 @@ async def acknowledge_alert(
     current_user: User = Depends(require_operator_or_admin)
 ) -> Any:
     """Acknowledge an alert."""
-    # TODO: Implement alert acknowledgment
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Alert acknowledgment not yet implemented"
+    alert_key = ""
+    
+    if 1000000 <= alert_id < 2000000:
+        resource_id = alert_id - 1000000
+        alert_key = f"cert_expiry_{resource_id}"
+    elif 2000000 <= alert_id < 3000000:
+        resource_id = alert_id - 2000000
+        alert_key = f"cert_revoked_{resource_id}"
+    elif 3000000 <= alert_id < 3500000:
+        resource_id = alert_id - 3000000
+        alert_key = f"monitoring_{resource_id}"
+    elif 3500000 <= alert_id < 4000000:
+        resource_id = alert_id - 3500000
+        alert_key = f"monitoring_config_{resource_id}"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid alert ID"
+        )
+        
+    # Check if already acknowledged
+    existing = db.query(AlertAcknowledgment).filter(
+        AlertAcknowledgment.alert_key == alert_key
+    ).first()
+    
+    if existing:
+        return {"status": "already_acknowledged"}
+        
+    # Create acknowledgment
+    ack = AlertAcknowledgment(
+        alert_key=alert_key,
+        acknowledged_by_id=current_user.id,
+        acknowledged_at=datetime.utcnow()
     )
+    db.add(ack)
+    db.commit()
+    
+    logger.info("Alert acknowledged", alert_id=alert_id, key=alert_key, user=current_user.username)
+    
+    return {"status": "acknowledged"}
 
 
 def _get_certificates_by_status(db: Session, status: CertificateStatus) -> List[Certificate]:
@@ -103,6 +145,7 @@ def _append_expired_certificate_alerts(
     alerts: List[dict],
     expired: List[Certificate],
     active: List[Certificate],
+    acknowledgments: dict,
 ) -> None:
     now = _utcnow()
 
@@ -119,6 +162,7 @@ def _append_expired_certificate_alerts(
             created_at=when,
             resource_id=cert.id,
             resource_type="certificate",
+            acknowledgments=acknowledgments,
         )
 
     for cert in active:
@@ -136,10 +180,15 @@ def _append_expired_certificate_alerts(
             created_at=expires_at,
             resource_id=cert.id,
             resource_type="certificate",
+            acknowledgments=acknowledgments,
         )
 
 
-def _append_expiring_certificate_alerts(alerts: List[dict], active: List[Certificate]) -> None:
+def _append_expiring_certificate_alerts(
+    alerts: List[dict], 
+    active: List[Certificate],
+    acknowledgments: dict
+) -> None:
     for cert in active:
         if not cert.not_valid_after:
             continue
@@ -161,10 +210,15 @@ def _append_expiring_certificate_alerts(alerts: List[dict], active: List[Certifi
             created_at=cert.updated_at or _utcnow(),
             resource_id=cert.id,
             resource_type="certificate",
+            acknowledgments=acknowledgments,
         )
 
 
-def _append_revoked_certificate_alerts(alerts: List[dict], revoked: List[Certificate]) -> None:
+def _append_revoked_certificate_alerts(
+    alerts: List[dict], 
+    revoked: List[Certificate],
+    acknowledgments: dict
+) -> None:
     for cert in revoked:
         _add_alert(
             alerts,
@@ -176,10 +230,15 @@ def _append_revoked_certificate_alerts(alerts: List[dict], revoked: List[Certifi
             created_at=cert.revoked_at,
             resource_id=cert.id,
             resource_type="certificate",
+            acknowledgments=acknowledgments,
         )
 
 
-def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) -> None:
+def _append_monitoring_alerts(
+    alerts: List[dict], 
+    monitored: List[Certificate],
+    acknowledgments: dict
+) -> None:
     if not monitored:
         return
 
@@ -194,6 +253,7 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                 created_at=cert.updated_at,
                 resource_id=cert.id,
                 resource_type="certificate",
+                acknowledgments=acknowledgments,
             )
             continue
 
@@ -217,6 +277,7 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     created_at=timestamp,
                     resource_id=service.id,
                     resource_type="monitoring_service",
+                    acknowledgments=acknowledgments,
                 )
             elif service.last_check_result == CheckResult.WARNING:
                 _add_alert(
@@ -228,6 +289,7 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     created_at=timestamp,
                     resource_id=service.id,
                     resource_type="monitoring_service",
+                    acknowledgments=acknowledgments,
                 )
             elif service.last_check_result == CheckResult.ERROR:
                 _add_alert(
@@ -239,6 +301,7 @@ def _append_monitoring_alerts(alerts: List[dict], monitored: List[Certificate]) 
                     created_at=timestamp,
                     resource_id=service.id,
                     resource_type="monitoring_service",
+                    acknowledgments=acknowledgments,
                 )
 
 
@@ -269,21 +332,59 @@ def _add_alert(
     created_at: Optional[datetime] = None,
     resource_id: Optional[int] = None,
     resource_type: Optional[str] = None,
+    acknowledgments: dict = None,
 ) -> None:
     timestamp = _normalize_timestamp(created_at)
-    alerts.append(
-        {
-            "id": len(alerts) + 1,
-            "title": title,
-            "message": message,
-            "alert_type": alert_type,
-            "severity": severity.lower(),
-            "status": status,
-            "created_at": timestamp,
-            "resource_id": resource_id,
-            "resource_type": resource_type,
+    
+    # Generate stable ID and Key
+    alert_id = 0
+    alert_key = ""
+    
+    if alert_type == "certificate_expiry":
+        alert_id = 1000000 + (resource_id or 0)
+        alert_key = f"cert_expiry_{resource_id}"
+    elif alert_type == "certificate_revoked":
+        alert_id = 2000000 + (resource_id or 0)
+        alert_key = f"cert_revoked_{resource_id}"
+    elif alert_type.startswith("monitoring_"):
+        if resource_type == "monitoring_service":
+             alert_id = 3000000 + (resource_id or 0)
+             alert_key = f"monitoring_{resource_id}"
+        else:
+             # monitoring_configuration (cert level)
+             alert_id = 3500000 + (resource_id or 0)
+             alert_key = f"monitoring_config_{resource_id}"
+    else:
+        # Fallback for unknown types
+        alert_id = 9000000 + len(alerts)
+        alert_key = f"unknown_{len(alerts)}"
+
+    # Check acknowledgment
+    ack_status = status
+    ack_info = {}
+    
+    if acknowledgments and alert_key in acknowledgments:
+        ack = acknowledgments[alert_key]
+        ack_status = "acknowledged"
+        ack_info = {
+            "acknowledged_at": ack.acknowledged_at.isoformat(),
+            "acknowledged_by": ack.acknowledged_by_id
         }
-    )
+
+    alert_obj = {
+        "id": alert_id,
+        "title": title,
+        "message": message,
+        "alert_type": alert_type,
+        "severity": severity.lower(),
+        "status": ack_status,
+        "created_at": timestamp,
+        "resource_id": resource_id,
+        "resource_type": resource_type,
+    }
+    alert_obj.update(ack_info)
+    
+    alerts.append(alert_obj)
 
 
 def _human_timestamp(value: Optional[datetime]) -> str:

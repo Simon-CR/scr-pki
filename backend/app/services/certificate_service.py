@@ -259,9 +259,10 @@ class CertificateService:
             
             db.commit()
             
-            # Delete private key from Vault
-            if cert.pem_private_key_vault_path:
-                self.vault.delete_key(cert.pem_private_key_vault_path)
+            # We do NOT delete the private key from Vault upon revocation.
+            # The key should be retained until the certificate is permanently deleted.
+            # This allows for audit/decryption of past traffic and prevents "missing key" errors
+            # if the certificate record still exists.
             
             logger.info("Certificate revoked successfully", 
                        certificate_id=certificate_id,

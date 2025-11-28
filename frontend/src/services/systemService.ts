@@ -21,6 +21,7 @@ export interface SystemHealthResponse {
   total_certificates: number
   total_cas: number
   missing_keys: string[]
+  orphaned_keys: string[]
 }
 
 export interface SystemConfigResponse {
@@ -57,9 +58,14 @@ export interface VersionCheckResponse {
   latest_version: string
   update_available: boolean
   release_url?: string
+  docker_image_available?: boolean
 }
 
 export const systemService = {
+  getSystemCertificate: async (): Promise<SystemCertRequest> => {
+    return api.get<SystemCertRequest>('/system/certificate')
+  },
+
   updateSystemCertificate: async (data: SystemCertRequest): Promise<SystemCertResponse> => {
     return api.post<SystemCertResponse>('/system/certificate', data)
   },

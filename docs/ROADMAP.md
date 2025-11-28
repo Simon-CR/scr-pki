@@ -15,7 +15,8 @@ Future features and improvements planned for the HomeLab PKI Platform.
 - [x] HashiCorp Vault integration
 - [x] Docker Compose deployment
 - [x] Basic authentication
-- [x] Audit logging
+- [x] Audit logging (Server-side only)
+- [x] Intermediate CA Support
 
 ## Version 1.1.0 (Q1 2026)
 
@@ -78,11 +79,6 @@ Future features and improvements planned for the HomeLab PKI Platform.
 ## Version 1.3.0 (Q3 2026)
 
 ### Features
-- [ ] **Intermediate CA Support**
-  - Create intermediate CAs
-  - CA hierarchy management
-  - Cross-signing
-  
 - [ ] **Client Certificates**
   - Client authentication certificates
   - VPN certificates
@@ -106,11 +102,7 @@ Future features and improvements planned for the HomeLab PKI Platform.
 ## Version 2.0.0 (Q4 2026)
 
 ### Major Features
-- [ ] **ACME Protocol Support**
-  - RFC 8555 compliance
-  - Automatic certificate issuance
-  - Integration with existing ACME clients
-  
+
 - [ ] **High Availability**
   - Multi-instance deployment
   - Database replication

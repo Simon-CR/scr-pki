@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -7,6 +7,7 @@ from sqlalchemy import text
 import httpx
 import structlog
 import os
+import time
 from datetime import datetime, timezone
 
 from app.core.database import get_db
@@ -21,12 +22,13 @@ from app.core.config import settings
 from app.services.backup_service import BackupService
 from sqlalchemy import text
 
-from app.models.certificate import Certificate
+from app.models.certificate import Certificate, CertificateStatus
 from app.models.ca import CertificateAuthority
 from app.models.monitoring import MonitoringService
 from app.models.user import User
 # from app.models.alert import Alert
 from cryptography.hazmat.primitives import serialization
+from packaging import version
 
 logger = structlog.get_logger(__name__)
 
@@ -37,9 +39,70 @@ class SystemCertRequest(BaseModel):
     subject_alt_names: Optional[str] = None
     auto_restart: bool = False
 
+@router.get("/certificate", response_model=SystemCertRequest)
+def get_system_certificate(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get the current system certificate details (Common Name and SANs).
+    Returns the details of the most recently issued system certificate.
+    """
+    # Find the latest certificate with the specific note
+    cert = db.query(Certificate).filter(
+        Certificate.notes == "System Certificate for PKI Management Interface",
+        Certificate.status == CertificateStatus.ACTIVE
+    ).order_by(Certificate.created_at.desc()).first()
+    
+    if not cert:
+        # Return empty defaults - frontend will handle defaults
+        return SystemCertRequest(
+            common_name="",
+            subject_alt_names="",
+            auto_restart=False
+        )
+        
+    # Format SANs
+    sans = ""
+    san_list = cert.get_subject_alt_names_list()
+    if san_list:
+        sans = ", ".join(san_list)
+        
+    return SystemCertRequest(
+        common_name=cert.common_name,
+        subject_alt_names=sans,
+        auto_restart=False
+    )
+
+def restart_nginx_container():
+    """
+    Restart the Nginx container in the background.
+    Waits a few seconds to allow the API response to be sent.
+    """
+    try:
+        # Wait for response to flush
+        time.sleep(2)
+        
+        import docker
+        # Connect to Docker socket
+        try:
+            client = docker.from_env()
+            client.ping()
+        except Exception as e:
+            logger.warning(f"docker.from_env() failed: {e}. Trying explicit socket.")
+            client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+        
+        # Find and restart Nginx container
+        container = client.containers.get('pki_nginx')
+        container.restart()
+        logger.info("Nginx container restarted successfully")
+    except Exception as e:
+        logger.error("Failed to restart Nginx container", error=str(e))
+
 @router.post("/certificate", status_code=status.HTTP_200_OK)
 def update_system_certificate(
     cert_data: SystemCertRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
 ):
@@ -80,6 +143,16 @@ def update_system_certificate(
         # Split by comma and strip whitespace
         san_list = [s.strip() for s in cert_data.subject_alt_names.split(",") if s.strip()]
     
+    # Find existing active certificates with the same Common Name to revoke them later
+    existing_certs = cert_service.list_certificates(
+        db=db,
+        search=cert_data.common_name,
+        status=CertificateStatus.ACTIVE,
+        certificate_type=CertificateType.SERVER
+    )
+    # Filter strictly by exact Common Name match to avoid partial matches
+    existing_certs = [c for c in existing_certs if c.common_name == cert_data.common_name]
+
     # Issue certificate
     try:
         cert = cert_service.issue_certificate(
@@ -92,14 +165,42 @@ def update_system_certificate(
             created_by_user_id=current_user.id
         )
         
+        # Revoke previous certificates
+        for old_cert in existing_certs:
+            try:
+                # Ensure we don't revoke the one we just created (though IDs should differ)
+                if old_cert.id != cert.id:
+                    cert_service.revoke_certificate(
+                        db=db,
+                        certificate_id=old_cert.id,
+                        reason="Replaced by new System Certificate",
+                        created_by_user_id=current_user.id
+                    )
+                    logger.info(f"Revoked previous system certificate: {old_cert.id}")
+            except Exception as e:
+                logger.warning(f"Failed to revoke old certificate {old_cert.id}: {e}")
+
         # Retrieve the private key from Vault
         # The Certificate model stores the path to the private key in Vault
+        # We need to handle the case where the key might not be immediately available or path is slightly different
+        # But issue_certificate should have stored it.
+        
+        # Debug log
+        logger.info(f"Retrieving private key from path: {cert.pem_private_key_vault_path}")
+        
         private_key_obj = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
         
         if not private_key_obj:
+            # Fallback: Try to list keys in that directory to see if we have a mismatch
+            try:
+                keys = vault_client.list_stored_keys("certificates")
+                logger.warning(f"Key not found. Available keys in certificates/: {keys}")
+            except:
+                pass
+                
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve generated private key"
+                detail=f"Failed to retrieve generated private key from {cert.pem_private_key_vault_path}"
             )
             
         # Serialize private key to PEM bytes
@@ -121,8 +222,15 @@ def update_system_certificate(
         crt_path = os.path.join(ssl_dir, "server.crt")
         key_path = os.path.join(ssl_dir, "server.key")
         
+        # Build full chain (Leaf + Intermediate + Root)
+        full_chain = cert.pem_certificate
+        if cert.issuer_ca:
+            chain_pem = ca_service.build_certificate_chain(cert.issuer_ca)
+            if chain_pem:
+                full_chain = f"{cert.pem_certificate.strip()}\n{chain_pem.strip()}\n"
+
         with open(crt_path, "w") as f:
-            f.write(cert.pem_certificate)
+            f.write(full_chain)
             
         with open(key_path, "wb") as f:
             f.write(private_key_pem)
@@ -132,25 +240,8 @@ def update_system_certificate(
         message = "System certificate updated successfully."
         
         if cert_data.auto_restart:
-            try:
-                import docker
-                # Connect to Docker socket
-                # We try environment first, then explicit socket
-                try:
-                    client = docker.from_env()
-                    client.ping()
-                except Exception as e:
-                    logger.warning(f"docker.from_env() failed: {e}. Trying explicit socket.")
-                    client = docker.DockerClient(base_url='unix://var/run/docker.sock')
-                
-                # Find and restart Nginx container
-                container = client.containers.get('pki_nginx')
-                container.restart()
-                logger.info("Nginx container restarted successfully")
-                message += " Nginx container has been restarted."
-            except Exception as e:
-                logger.error("Failed to restart Nginx container", error=str(e))
-                message += f" However, failed to auto-restart Nginx: {str(e)}. Please restart manually."
+            background_tasks.add_task(restart_nginx_container)
+            message += " Nginx container will restart in a few seconds."
         else:
             message += " Please restart the application/Nginx to apply changes."
 
@@ -233,6 +324,12 @@ def check_system_health(
     for cert in certs:
         if cert.pem_private_key_vault_path:
             expected_paths.add(cert.pem_private_key_vault_path)
+            
+            # Skip key check for revoked certificates as their keys might have been deleted (legacy behavior)
+            # or we just don't care as much about health of revoked certs
+            if cert.status == CertificateStatus.REVOKED:
+                continue
+
             key = vault_client.retrieve_private_key(cert.pem_private_key_vault_path)
             if not key:
                 health.missing_keys.append(f"Cert: {cert.common_name} (ID: {cert.id})")
@@ -967,7 +1064,7 @@ def get_alert_settings(
         smtp_host=settings_dict.get("smtp_host"),
         smtp_port=get_int("smtp_port", 587),
         smtp_username=settings_dict.get("smtp_username"),
-        smtp_password=settings_dict.get("smtp_password"), # TODO: Should we mask this?
+        smtp_password="********" if settings_dict.get("smtp_password") else None,
         smtp_use_tls=get_bool("smtp_use_tls", True),
         alert_email_from=settings_dict.get("alert_email_from"),
         alert_email_to=settings_dict.get("alert_email_to"),
@@ -1013,7 +1110,8 @@ def update_alert_settings(
     if settings.smtp_host is not None: update_config("smtp_host", settings.smtp_host)
     update_config("smtp_port", str(settings.smtp_port))
     if settings.smtp_username is not None: update_config("smtp_username", settings.smtp_username)
-    if settings.smtp_password is not None: update_config("smtp_password", settings.smtp_password)
+    if settings.smtp_password is not None and settings.smtp_password != "********":
+        update_config("smtp_password", settings.smtp_password)
     update_config("smtp_use_tls", str(settings.smtp_use_tls).lower())
     if settings.alert_email_from is not None: update_config("alert_email_from", settings.alert_email_from)
     if settings.alert_email_to is not None: update_config("alert_email_to", settings.alert_email_to)
@@ -1043,13 +1141,14 @@ class VersionCheckResponse(BaseModel):
     latest_version: str
     update_available: bool
     release_url: Optional[str] = None
+    docker_image_available: Optional[bool] = None
 
 @router.get("/version-check", response_model=VersionCheckResponse)
 async def check_version(current_user = Depends(require_admin)):
     """
-    Check for updates against the GitHub repository.
+    Check for updates against the GitHub repository and DockerHub.
     """
-    current_version = "0.1.0"
+    current_version = "0.2.0"
     try:
         # Try to read version from file (mounted at /app/VERSION or in current dir)
         version_paths = ["VERSION", "/app/VERSION"]
@@ -1065,17 +1164,44 @@ async def check_version(current_user = Depends(require_admin)):
 
     latest_version = current_version
     release_url = "https://github.com/Simon-CR/scr-pki/releases"
+    docker_available = False
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.github.com/repos/Simon-CR/scr-pki/releases/latest",
-                timeout=5.0
-            )
-            if response.status_code == 200:
-                data = response.json()
-                latest_version = data.get("tag_name", "").lstrip("v")
-                release_url = data.get("html_url")
+            # Check GitHub
+            try:
+                response = await client.get(
+                    "https://api.github.com/repos/Simon-CR/scr-pki/releases/latest",
+                    timeout=5.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    tag_name = data.get("tag_name", "").lstrip("v")
+                    release_url = data.get("html_url")
+                    
+                    # Robust version comparison
+                    if version.parse(tag_name) > version.parse(current_version):
+                        latest_version = tag_name
+            except Exception as e:
+                logger.warning("Failed to check GitHub updates", error=str(e))
+
+            # Check DockerHub
+            try:
+                # Check if the latest version tag exists on DockerHub
+                docker_tag = f"v{latest_version}" if not latest_version.startswith("v") else latest_version
+                # Or just check 'latest' or the specific version
+                # Let's check the specific version tag corresponding to the latest release
+                
+                # Note: DockerHub API might require auth for some endpoints, but tags list is usually public for public repos
+                docker_response = await client.get(
+                    f"https://hub.docker.com/v2/repositories/simonclr/scr-pki-backend/tags/{latest_version}",
+                    timeout=5.0
+                )
+                if docker_response.status_code == 200:
+                    docker_available = True
+            except Exception as e:
+                logger.warning("Failed to check DockerHub updates", error=str(e))
+
     except Exception as e:
         logger.warning("Failed to check for updates", error=str(e))
         
@@ -1083,5 +1209,6 @@ async def check_version(current_user = Depends(require_admin)):
         current_version=current_version,
         latest_version=latest_version,
         update_available=latest_version != current_version,
-        release_url=release_url
+        release_url=release_url,
+        docker_image_available=docker_available
     )

@@ -44,3 +44,6 @@ mypy==1.7.1
 
 # Email notifications
 aiosmtplib==3.0.1
+
+# Version comparison
+packaging==23.2

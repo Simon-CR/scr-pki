@@ -39,11 +39,6 @@ type MonitoringFormState = {
   monitoring_target_port: string
 }
 
-interface ACMEConfig {
-  enabled: boolean
-  directory_url: string
-  external_host: string
-}
 
 const createInitialIssueForm = (): IssueFormState => ({
   common_name: '',
@@ -93,8 +88,7 @@ const getVaultUiUrl = () => {
   if (import.meta.env.VITE_VAULT_UI_URL) {
     return import.meta.env.VITE_VAULT_UI_URL
   }
-  const hostname = window.location.hostname
-  return `http://${hostname}:8200/ui`
+  return `${window.location.origin}/ui/`
 }
 
 const getYearPresetFromDays = (days: number): string => {
@@ -109,8 +103,6 @@ const Certificates: React.FC = () => {
     search: ''
   })
   const [showIssueModal, setShowIssueModal] = useState(false)
-  const [showACMEModal, setShowACMEModal] = useState(false)
-  const [acmeHostInput, setAcmeHostInput] = useState('')
   
   const [issueForm, setIssueForm] = useState<IssueFormState>(() => createInitialIssueForm())
   const [issueError, setIssueError] = useState<string | null>(null)
@@ -124,28 +116,6 @@ const Certificates: React.FC = () => {
   const [downloadTarget, setDownloadTarget] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
-  const { data: acmeConfig, refetch: refetchACME } = useQuery({
-    queryKey: ['acmeConfig'],
-    queryFn: () => api.get<ACMEConfig>('/ca/acme/config'),
-    enabled: showACMEModal
-  })
-
-  const updateACMEMutation = useMutation({
-    mutationFn: (data: { external_host: string }) => api.post('/ca/acme/config', data),
-    onSuccess: () => {
-      toast.success('ACME configuration updated')
-      refetchACME()
-    },
-    onError: (error) => {
-      toast.error(getApiErrorMessage(error, 'Failed to update ACME config'))
-    }
-  })
-
-  useEffect(() => {
-    if (acmeConfig?.external_host) {
-      setAcmeHostInput(acmeConfig.external_host)
-    }
-  }, [acmeConfig])
 
   useEffect(() => {
     if (!issueForm.monitoring_enabled) {
@@ -666,13 +636,6 @@ const Certificates: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => setShowACMEModal(true)}
-            className="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
-          >
-            Configure ACME
-          </button>
-          <button
-            type="button"
             onClick={handleOpenVaultUi}
             className="inline-flex items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
           >
@@ -763,7 +726,11 @@ const Certificates: React.FC = () => {
                                 Monitoring
                               </span>
                             )}
-                            {/* TODO: Add subject_alternative_names to Certificate type */}
+                            {cert.subject_alt_names && cert.subject_alt_names.length > 0 && (
+                              <div className="mt-1 text-xs text-gray-500 truncate max-w-xs">
+                                {cert.subject_alt_names.join(', ')}
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -1353,54 +1320,6 @@ const Certificates: React.FC = () => {
         </div>
       )}
 
-      {/* ACME Configuration Modal */}
-      {showACMEModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-10 mx-auto p-6 border max-w-md shadow-lg rounded-md bg-white">
-            <div className="mb-4">
-              <h3 className="text-lg font-medium text-gray-900">ACME Configuration</h3>
-              <p className="text-sm text-gray-500">Configure the ACME settings for automated certificate management</p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  ACME Server URL
-                </label>
-                <input
-                  type="text"
-                  value={acmeHostInput}
-                  onChange={(e) => setAcmeHostInput(e.target.value)}
-                  placeholder="https://acme-v02.api.letsencrypt.org/directory"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Example: https://acme-v02.api.letsencrypt.org/directory
-                </p>
-              </div>
-
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowACMEModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    updateACMEMutation.mutate({ external_host: acmeHostInput })
-                  }}
-                  disabled={updateACMEMutation.isPending}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {updateACMEMutation.isPending ? 'Saving...' : 'Save Configuration'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
