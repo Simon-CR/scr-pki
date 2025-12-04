@@ -1776,10 +1776,10 @@ const SystemSettings: React.FC = () => {
                               <h4 className="text-sm font-medium text-gray-700">Oracle OCI KMS Settings</h4>
 
                               <div>
-                                <label className="block text-xs font-medium text-gray-600">Key OCID</label>
+                                <label className="block text-xs font-medium text-gray-600">Key OCID (not Vault OCID)</label>
                                 <input
                                   type="text"
-                                  placeholder="ocid1.key.oc1.iad.xxxxx"
+                                  placeholder="ocid1.key.oc1.region... (find in Vault → Master Encryption Keys)"
                                   value={(sealFormData.key_id as string) || ''}
                                   onChange={(e) => updateSealFormField('key_id', e.target.value)}
                                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
