@@ -49,3 +49,5 @@ aiosmtplib==3.0.1
 
 # Version comparison
 packaging==23.2
+# Cloud KMS SDKs (for auto-unseal testing)
+oci==2.119.1
