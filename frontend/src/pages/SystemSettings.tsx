@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -39,6 +39,8 @@ const SystemSettings: React.FC = () => {
   const [testEmailLoading, setTestEmailLoading] = useState(false)
   const [testSlackLoading, setTestSlackLoading] = useState(false)
   const [testDiscordLoading, setTestDiscordLoading] = useState(false)
+  const [autoUnsealStatus, setAutoUnsealStatus] = useState<AutoUnsealStatusResponse | null>(null)
+  const [autoUnsealLoading, setAutoUnsealLoading] = useState(false)
   
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
@@ -233,6 +235,37 @@ const SystemSettings: React.FC = () => {
     }
   }
 
+  const loadAutoUnsealStatus = async () => {
+    try {
+      const status = await systemService.getAutoUnsealStatus()
+      setAutoUnsealStatus(status)
+    } catch (error) {
+      console.error('Failed to load auto-unseal status', error)
+    }
+  }
+
+  const handleAutoUnseal = async () => {
+    const confirmed = await confirm({
+      title: 'Auto-Unseal Vault',
+      message: 'This will attempt to unseal the Vault using the stored keys. For production environments, consider using proper KMS-based auto-unseal instead. Continue?',
+      confirmLabel: 'Auto-Unseal',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setAutoUnsealLoading(true)
+    try {
+      const result = await systemService.autoUnsealVault()
+      toast.success(result.message || 'Vault unsealed successfully!')
+      loadConfig()
+      onCheckHealth(true)
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Auto-unseal failed')
+    } finally {
+      setAutoUnsealLoading(false)
+    }
+  }
+
   const handleCopyKeys = () => {
     if (!initData) return
     
@@ -331,6 +364,11 @@ const SystemSettings: React.FC = () => {
     try {
       const data = await systemService.checkSystemHealth()
       setHealthData(data)
+      
+      // Load auto-unseal status if vault is sealed
+      if (data.vault_sealed && data.vault_initialized) {
+        loadAutoUnsealStatus()
+      }
       
       if (silent) return
 
@@ -634,8 +672,47 @@ const SystemSettings: React.FC = () => {
                                 The Vault is currently sealed. You must provide the unseal keys to unlock it.
                               </p>
                             </div>
+                            
+                            {/* Auto-Unseal Option */}
+                            {autoUnsealStatus?.available && (
+                              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center">
+                                    <Zap className="h-5 w-5 text-blue-500 mr-2" />
+                                    <div>
+                                      <p className="text-sm font-medium text-blue-800">Auto-Unseal Available</p>
+                                      <p className="text-xs text-blue-600">{autoUnsealStatus.message}</p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={handleAutoUnseal}
+                                    disabled={autoUnsealLoading}
+                                    className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                                  >
+                                    {autoUnsealLoading ? (
+                                      <>
+                                        <LoadingSpinner size="sm" className="mr-2" />
+                                        Unsealing...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Zap className="h-4 w-4 mr-1" />
+                                        Auto-Unseal
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                                <p className="mt-2 text-xs text-blue-600">
+                                  ⚠️ For production, consider using KMS-based auto-unseal for better security.
+                                </p>
+                              </div>
+                            )}
+
                             <div className="mt-4">
-                                <label className="block text-sm font-medium text-yellow-800 mb-1">Unseal Keys</label>
+                              <label className="block text-sm font-medium text-yellow-800 mb-1">
+                                {autoUnsealStatus?.available ? 'Or enter keys manually:' : 'Unseal Keys'}
+                              </label>
                                 {unsealKeys.map((key, idx) => (
                                   <input
                                     key={idx}

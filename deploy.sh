@@ -86,7 +86,6 @@ if [[ -z "$INITIALIZED" ]]; then
     chmod 600 vault_keys.json
     
     echo -e "${GREEN}✅ Vault initialized! Keys saved to 'vault_keys.json'.${NC}"
-    echo -e "${RED}🔥 IMPORTANT: BACK UP 'vault_keys.json' AND DELETE IT FROM THIS SERVER!${NC}"
     
     # Parse keys for unsealing
     KEY1=$(echo "$INIT_OUTPUT" | grep -o '"unseal_keys_b64": *\[ *"[^"]*"' | cut -d'"' -f4)
@@ -107,6 +106,38 @@ if [[ -z "$INITIALIZED" ]]; then
     # Restart backend to pick up new token
     $DOCKER_COMPOSE restart backend
     
+    # Prompt for unseal key management
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}                    VAULT UNSEAL KEY MANAGEMENT                          ${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "Your Vault unseal keys have been saved to 'vault_keys.json'."
+    echo "You have FOUR options for managing these keys:"
+    echo ""
+    echo -e "${GREEN}Option 1: Local Auto-Unseal (Convenience)${NC}"
+    echo "   Keep vault_keys.json on this server for automatic unsealing."
+    echo -e "   ${RED}⚠️  WARNING: Less secure - keys stored in plain text on disk.${NC}"
+    echo "   Acceptable for isolated home labs with physical security."
+    echo ""
+    echo -e "${GREEN}Option 2: Manual Unseal (Secure)${NC}"
+    echo "   Backup vault_keys.json to a secure location (password manager,"
+    echo "   encrypted USB, etc.) and DELETE it from this server."
+    echo "   You'll need to manually unseal via Web UI after restarts."
+    echo ""
+    echo -e "${GREEN}Option 3: Self-Hosted Transit Auto-Unseal (Self-Hosted KMS)${NC}"
+    echo "   Run a separate Vault instance as your own KMS server."
+    echo "   No cloud dependency, automatic unseal, you control everything."
+    echo ""
+    echo -e "${GREEN}Option 4: Cloud KMS Auto-Unseal (Managed KMS)${NC}"
+    echo "   Configure AWS/GCP/Azure/OCI KMS for automatic unsealing."
+    echo "   Keys protected by cloud HSM, automatic unseal on restart."
+    echo ""
+    echo "See docs/VAULT_UNSEAL.md for detailed setup instructions."
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    read -p "Press Enter to continue..."
+    
 elif [[ -n "$SEALED" ]]; then
     echo -e "${YELLOW}⚠️  Vault is SEALED.${NC}"
     if [ -f vault_keys.json ]; then
@@ -118,10 +149,17 @@ elif [[ -n "$SEALED" ]]; then
         $DOCKER_COMPOSE exec vault vault operator unseal "$KEY1" > /dev/null
         $DOCKER_COMPOSE exec vault vault operator unseal "$KEY2" > /dev/null
         $DOCKER_COMPOSE exec vault vault operator unseal "$KEY3" > /dev/null
-        echo "✅ Vault unsealed."
+        echo "✅ Vault auto-unsealed using local keys."
+        echo -e "${YELLOW}Note: For better security, consider Cloud KMS auto-unseal.${NC}"
+        echo "See docs/VAULT_UNSEAL.md for options."
     else
-        echo -e "${RED}❌ Vault is sealed and no keys found. Please unseal manually:${NC}"
-        echo "   $DOCKER_COMPOSE exec vault vault operator unseal <key>"
+        echo -e "${YELLOW}No vault_keys.json found. Vault needs manual unsealing.${NC}"
+        echo ""
+        echo "To unseal, use one of these methods:"
+        echo "  1. Web UI: https://localhost/ui/ → Enter 3 unseal keys"
+        echo "  2. CLI:    docker exec pki_vault vault operator unseal <key>"
+        echo ""
+        echo "See docs/VAULT_UNSEAL.md for more options including Cloud KMS."
     fi
 else
     echo "✅ Vault is already initialized and unsealed."

@@ -40,6 +40,12 @@ export interface VaultInitResponse {
   message: string
 }
 
+export interface AutoUnsealStatusResponse {
+  available: boolean
+  method: string | null
+  message: string
+}
+
 export interface Backup {
   filename: string
   size: number
@@ -108,6 +114,14 @@ export const systemService = {
 
   unsealVault: async (keys: string[]): Promise<{ message: string }> => {
     return api.post<{ message: string }>('/system/config/vault/unseal', { keys })
+  },
+
+  getAutoUnsealStatus: async (): Promise<AutoUnsealStatusResponse> => {
+    return api.get<AutoUnsealStatusResponse>('/system/config/vault/auto-unseal-status')
+  },
+
+  autoUnsealVault: async (): Promise<{ message: string; method: string }> => {
+    return api.post<{ message: string; method: string }>('/system/config/vault/auto-unseal', {})
   },
 
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {

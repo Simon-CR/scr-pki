@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.10] - 2025-12-04
+
+### Added
+- **Auto-Unseal in Web UI**: Added one-click auto-unseal option when Vault is sealed
+  - Detects `vault_keys.json` file in data directory
+  - Shows "Auto-Unseal Available" button with clear warnings about production use
+  - Includes confirmation dialog before unsealing
+  - Future support for KMS-based auto-unseal planned
+- **Vault Unseal Documentation**: New comprehensive `docs/VAULT_UNSEAL.md` with 4 options:
+  - Option 1: Local auto-unseal with `vault_keys.json`
+  - Option 2: Manual unseal via Web UI
+  - Option 3: Self-hosted Transit auto-unseal (for secure home labs)
+  - Option 4: Cloud KMS (AWS, GCP, Azure, OCI, AliCloud)
+- **vault_keys.json.example**: Added example file showing the correct format for unseal keys
+
+### Changed
+- **deploy.sh**: Updated with comprehensive Vault unseal options information
+- **README.md**: Improved first-run instructions and added Vault unseal options section
+
+### Fixed
+- **Port References**: Standardized documentation to use ports 443/80 instead of mixed references to 9443/8080
+
 ## [0.2.9] - 2025-12-04
 
 ### Changed

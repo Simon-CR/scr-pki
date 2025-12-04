@@ -67,9 +67,10 @@ SCR-PKI provides a complete solution for managing SSL/TLS certificates in your h
    - **Frontend:** https://localhost (Accept the self-signed certificate warning)
    - **Vault UI:** https://localhost/ui/
 
-3. **Default Credentials:**
-   - **Username:** `admin`
-   - **Password:** (Check your `.env` file, default is `change_this_password`)
+3. **Initial Setup:**
+   - On first access, you'll be prompted to create an admin account
+   - Credentials are created during initial setup (not pre-configured)
+   - The setup wizard guides you through account creation
 
 ### Development
 
@@ -117,6 +118,16 @@ The platform consists of:
 - **Nginx** - Reverse proxy and load balancer
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+
+### Vault Unsealing Options
+
+Vault requires unsealing after restarts. Three options are available:
+
+1. **Local Auto-Unseal** - Store keys locally (convenient, less secure)
+2. **Manual Unseal** - Unseal via Web UI (secure, requires operator)
+3. **Cloud KMS Auto-Unseal** - AWS/GCP/Azure/OCI KMS (secure + automatic)
+
+See [VAULT_UNSEAL.md](docs/VAULT_UNSEAL.md) for detailed setup instructions.
 
 ## 📖 Documentation
 

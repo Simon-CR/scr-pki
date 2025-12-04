@@ -480,6 +480,127 @@ def unseal_vault(
             detail="Failed to unseal Vault. Check server logs for details."
         )
 
+
+class AutoUnsealStatusResponse(BaseModel):
+    available: bool
+    method: Optional[str] = None  # 'vault_keys_json' or 'kms' (future)
+    message: str
+
+
+@router.get("/config/vault/auto-unseal-status", response_model=AutoUnsealStatusResponse)
+def get_auto_unseal_status(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Check if auto-unseal is available.
+    Returns whether vault_keys.json exists or KMS is configured.
+    """
+    import json
+    from pathlib import Path
+    
+    # Check for vault_keys.json in data directory
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    if vault_keys_path.exists():
+        try:
+            with open(vault_keys_path, 'r') as f:
+                keys_data = json.load(f)
+            if 'keys' in keys_data and len(keys_data.get('keys', [])) > 0:
+                return AutoUnsealStatusResponse(
+                    available=True,
+                    method="vault_keys_json",
+                    message="Unseal keys found in vault_keys.json"
+                )
+        except Exception as e:
+            logger.warning("Failed to read vault_keys.json", error=str(e))
+    
+    # Future: Check for KMS configuration in database
+    # kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_kms_config").first()
+    # if kms_config:
+    #     return AutoUnsealStatusResponse(available=True, method="kms", message="KMS auto-unseal configured")
+    
+    return AutoUnsealStatusResponse(
+        available=False,
+        method=None,
+        message="No auto-unseal method available. Place vault_keys.json in the data directory or configure KMS."
+    )
+
+
+@router.post("/config/vault/auto-unseal", status_code=status.HTTP_200_OK)
+def auto_unseal_vault(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Automatically unseal Vault using available methods.
+    Tries vault_keys.json first, then KMS if configured.
+    
+    WARNING: This feature is for convenience in dev/test environments.
+    For production, consider using proper KMS-based auto-unseal.
+    """
+    import json
+    from pathlib import Path
+    
+    # Check for vault_keys.json
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    if vault_keys_path.exists():
+        try:
+            with open(vault_keys_path, 'r') as f:
+                keys_data = json.load(f)
+            
+            keys = keys_data.get('keys', [])
+            if not keys:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="vault_keys.json exists but contains no unseal keys"
+                )
+            
+            # Attempt to unseal with the keys
+            result = vault_client.unseal_vault(keys)
+            
+            if result.get('sealed') is True:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Vault remained sealed. The keys in vault_keys.json may be incorrect or insufficient."
+                )
+            
+            # Force client reconnect/auth check
+            vault_client.connect()
+            
+            logger.info("Vault auto-unsealed successfully using vault_keys.json")
+            return {"message": "Vault unsealed successfully using vault_keys.json", "method": "vault_keys_json"}
+            
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="vault_keys.json is not valid JSON"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Auto-unseal failed", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Auto-unseal failed: {str(e)}"
+            )
+    
+    # Future: Try KMS auto-unseal
+    # kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_kms_config").first()
+    # if kms_config:
+    #     ... implement KMS unseal ...
+    
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No auto-unseal method available. Place vault_keys.json in the data directory."
+    )
+
+
 class VaultInitResponse(BaseModel):
     root_token: str
     keys: List[str]
