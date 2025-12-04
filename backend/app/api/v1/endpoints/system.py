@@ -1190,7 +1190,7 @@ def replicate_unseal_keys(
     try:
         from app.core.security import decrypt_value
         # Config is encrypted, need to decrypt first
-        decrypted = decrypt_value(config.value, db)
+        decrypted = decrypt_value(config.value)
         kms_config = json.loads(decrypted)
     except Exception as e:
         logger.error(f"Failed to decrypt/parse config for {request.destination}: {e}")
