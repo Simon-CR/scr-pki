@@ -464,14 +464,22 @@ const SystemSettings: React.FC = () => {
         toast.success(result.message)
         // Clear migration steps since migration is complete
         setMigrationSteps(null)
-        // Reload health and seal config
-        onCheckHealth(false)
-        loadSealConfig()
+        // Reload health and seal config after a delay (Vault may be restarting)
+        setTimeout(() => {
+          onCheckHealth(false).catch(() => {})
+          loadSealConfig().catch(() => {})
+        }, 2000)
       } else {
         toast.error(result.message)
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Migration failed')
+      const errorMsg = error.response?.data?.detail || error.message || 'Migration failed'
+      toast.error(errorMsg)
+      setMigrationResult({
+        success: false,
+        message: errorMsg,
+        docker_available: true
+      })
     } finally {
       setMigrationLoading(false)
     }
