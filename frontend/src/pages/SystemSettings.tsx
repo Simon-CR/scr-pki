@@ -377,12 +377,23 @@ const SystemSettings: React.FC = () => {
         enabled: currentProvider !== 'shamir',
         config: sealFormData as Record<string, string | boolean | number>
       }
-      const result = await systemService.saveSealConfig(request)
-      toast.success(result.message)
-      if (result.next_steps && result.next_steps.length > 0) {
-        setMigrationSteps(result.next_steps)
+      
+      let result
+      if (editingProvider && editingProvider !== 'shamir' && editingProvider !== 'local_file') {
+        // Save to provider-specific endpoint when using priority panel
+        result = await systemService.saveProviderConfig(editingProvider, request)
+        toast.success(result.message)
+        // Reload priority list to update status
+        loadUnsealPriority()
+      } else {
+        // Use generic endpoint for legacy flow
+        result = await systemService.saveSealConfig(request)
+        toast.success(result.message)
+        if (result.next_steps && result.next_steps.length > 0) {
+          setMigrationSteps(result.next_steps)
+        }
+        loadSealConfig()
       }
-      loadSealConfig()
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Failed to save seal configuration')
     } finally {
