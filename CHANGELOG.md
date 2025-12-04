@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Validity UI**: Updated certificate validity dropdown with clearer browser compatibility notes
 - **Backend Logging**: Changed validity logging from warning to info level for homelab use cases
 - **Proxmox Documentation**: Updated instructions to use separate key/certificate downloads instead of combined bundle
+- **Production Compose**: Removed VERSION file bind mount - version is now read from inside the Docker image, allowing standalone docker-compose usage without cloning the full repo
 
 ### Fixed
 - **Timezone Comparison**: Fixed "can't compare offset-naive and offset-aware datetimes" error in certificate renewal by adding `ensure_utc()` helper function
