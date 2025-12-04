@@ -98,7 +98,6 @@ services:
       - ./backups:/app/backups
       - ssl_data:/etc/nginx/ssl
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./VERSION:/app/VERSION:ro
     networks:
       - frontend-net
       - backend-net
