@@ -5,6 +5,7 @@ Complete guide to managing certificates in the HomeLab PKI Platform.
 ## Table of Contents
 
 - [Certificate Lifecycle](#certificate-lifecycle)
+- [Browser Compatibility](#browser-compatibility)
 - [Issuing Certificates](#issuing-certificates)
 - [Certificate Types](#certificate-types)
 - [Deployment](#deployment)
@@ -51,6 +52,36 @@ Complete guide to managing certificates in the HomeLab PKI Platform.
 └──────────┘
 ```
 
+## Browser Compatibility
+
+When issuing certificates for internal/homelab use, browser compatibility depends on certificate validity period:
+
+### Validity Period Limits
+
+| Duration | Compatibility | Notes |
+|----------|---------------|-------|
+| ≤398 days | ✅ All browsers | Full Apple PKI compliance (Safari, Chrome, Firefox, etc.) |
+| ≤825 days | ✅ Most browsers | macOS 10.15/iOS 13+ compatible, some Safari warnings possible |
+| >825 days | ⚠️ Most browsers | Chrome, Firefox, Opera work fine; Safari may show "not standards compliant" |
+
+### Key Points
+
+1. **Internal CAs are exempt from public CA limits**: The 398-day limit from Apple (Sept 2020) specifically exempts certificates issued from user-added or administrator-added Root CAs.
+
+2. **825-day limit**: macOS 10.15/iOS 13 introduced an 825-day structural limit for TLS certificates. Safari may show compliance warnings for certificates exceeding this.
+
+3. **Chrome/Firefox/Opera**: These browsers are more lenient with internal CA certificates and work fine with longer validity periods (10-20 years).
+
+4. **Recommendation**: Use 365 days (1 year) for best compatibility across all platforms. For homelab services accessed primarily from non-Apple devices, longer durations (5-20 years) work fine.
+
+### Trust Configuration
+
+For internal certificates to work without warnings, your Root CA must be:
+- Installed in the system trust store (Keychain on macOS, Certificate Manager on Windows)
+- Marked as "Always Trust" for SSL/TLS
+
+See [Deployment](#deployment) section for platform-specific trust installation.
+
 ## Issuing Certificates
 
 ### Via Web Interface
@@ -94,9 +125,13 @@ Complete guide to managing certificates in the HomeLab PKI Platform.
 **Certificate Options:**
 
 - **Validity Period**: How long the certificate is valid
-  - Default: `3650 days` (10 years)
+  - Default: `365 days` (1 year)
   - Range: `1-7300 days`
-  - Recommendation: 3650 days for home lab use
+  - **Browser Compatibility:**
+    - ≤398 days: Full Apple PKI/Safari compliance
+    - ≤825 days: macOS 10.15/iOS 13 compatible
+    - >825 days: Works with Chrome, Firefox, Opera (Safari may show "not standards compliant")
+  - Recommendation: 365 days for best compatibility, longer durations work fine with most browsers
 
 - **Key Size**: RSA key size in bits
   - Options: `2048, 4096`
@@ -158,7 +193,7 @@ curl -X POST https://pki.homelab.local/api/v1/certificates/issue \
   -d '{
     "common_name": "grafana.local",
     "san_entries": ["grafana.local", "192.168.1.101"],
-    "validity_days": 3650,
+    "validity_days": 365,
     "key_size": 4096,
     "organization": "HomeLab",
     "country": "US"
@@ -173,7 +208,7 @@ curl -X POST https://pki.homelab.local/api/v1/certificates/issue \
   "serial_number": "1A:2B:3C:4D:5E:6F",
   "common_name": "grafana.local",
   "valid_from": "2025-01-01T00:00:00Z",
-  "valid_until": "2035-01-01T00:00:00Z",
+  "valid_until": "2026-01-01T00:00:00Z",
   "status": "active",
   "download_urls": {
     "certificate": "/api/v1/certificates/cert_123456/download/cert",
@@ -195,7 +230,7 @@ curl -X POST https://pki.homelab.local/api/v1/certificates/issue \
 - SAN: All hostnames/IPs where service is accessible
 - Extended Key Usage: `Server Authentication`
 - Key Size: 4096 bits
-- Validity: 3650 days (10 years)
+- Validity: 365 days (1 year) recommended, up to 20 years supported
 
 **Examples:**
 - Home Assistant: `homeassistant.local`
@@ -598,7 +633,7 @@ for service in "${SERVICES[@]}"; do
     -d "{
       \"common_name\": \"${service}.local\",
       \"san_entries\": [\"${service}.local\"],
-      \"validity_days\": 3650
+      \"validity_days\": 365
     }"
 done
 ```

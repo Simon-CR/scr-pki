@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2025-12-03
+
+### Added
+- **Certificate Validity Presets**: Added tiered validity options with browser compatibility information:
+  - ≤398 days: Full Apple PKI/Safari compliance
+  - ≤825 days: macOS 10.15/iOS 13 compatible
+  - >825 days: Works with Chrome, Firefox, Opera (Safari may show warnings)
+- **825-day Preset**: New validity option for maximum Safari compatibility
+
+### Changed
+- **Validity UI**: Updated certificate validity dropdown with clearer browser compatibility notes
+- **Backend Logging**: Changed validity logging from warning to info level for homelab use cases
+- **Proxmox Documentation**: Updated instructions to use separate key/certificate downloads instead of combined bundle
+
+### Fixed
+- **Timezone Comparison**: Fixed "can't compare offset-naive and offset-aware datetimes" error in certificate renewal by adding `ensure_utc()` helper function
+
 ## [0.2.5] - 2025-11-28
 
 ### Fixed
