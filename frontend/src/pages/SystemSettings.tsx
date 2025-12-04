@@ -2398,7 +2398,7 @@ const SystemSettings: React.FC = () => {
               <div className="flex justify-center">
                 <LoadingSpinner />
               </div>
-            )}}
+            )}
           </div>
         </div>
         )}
