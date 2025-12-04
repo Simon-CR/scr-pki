@@ -1755,42 +1755,57 @@ def test_seal_config(
         try:
             import oci
             
-            # Build config
-            oci_config = {
-                "user": config.get('auth_type_api_key_user_ocid', ''),
-                "fingerprint": config.get('auth_type_api_key_fingerprint', ''),
-                "tenancy": config.get('auth_type_api_key_tenancy_ocid', ''),
-                "region": config.get('region', ''),
-                "key_content": config.get('auth_type_api_key_private_key', ''),
-            }
+            # Get crypto endpoint (required for KMS operations)
+            crypto_endpoint = config.get('crypto_endpoint', '')
+            if not crypto_endpoint:
+                return {"success": False, "message": "Crypto Endpoint is required for OCI KMS"}
             
-            # Validate required fields
-            missing_fields = [k for k, v in oci_config.items() if not v and k != 'key_content']
-            if missing_fields:
-                return {"success": False, "message": f"Missing required OCI configuration: {', '.join(missing_fields)}"}
-            
-            # Check if using instance principal
-            if config.get('auth_type_use_instance_principal'):
-                signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-                kms_client = oci.key_management.KmsManagementClient({}, signer=signer)
-            else:
-                if not oci_config.get('key_content'):
-                    return {"success": False, "message": "Private key is required for API key authentication"}
-                kms_client = oci.key_management.KmsManagementClient(oci_config)
-            
-            # Set the endpoint
-            management_endpoint = config.get('management_endpoint', '')
-            if management_endpoint:
-                kms_client.base_client.endpoint = management_endpoint
-            
-            # Try to get key info
+            # Get key ID
             key_id = config.get('key_id', '')
             if not key_id:
                 return {"success": False, "message": "Key ID (OCID) is required"}
             
-            key = kms_client.get_key(key_id)
+            # Check if using instance principal
+            if config.get('auth_type_use_instance_principal'):
+                try:
+                    signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                    kms_crypto_client = oci.key_management.KmsCryptoClient({}, signer=signer, service_endpoint=crypto_endpoint)
+                except Exception as e:
+                    return {"success": False, "message": f"Instance Principal authentication failed (only works on OCI compute instances): {str(e)}"}
+            else:
+                # API Key authentication
+                oci_config = {
+                    "user": config.get('auth_type_api_key_user_ocid', ''),
+                    "fingerprint": config.get('auth_type_api_key_fingerprint', ''),
+                    "tenancy": config.get('auth_type_api_key_tenancy_ocid', ''),
+                    "region": config.get('region', ''),
+                    "key_content": config.get('auth_type_api_key_private_key', ''),
+                }
+                
+                # Validate required fields
+                required_fields = ['user', 'fingerprint', 'tenancy', 'region']
+                missing_fields = [k for k in required_fields if not oci_config.get(k)]
+                if missing_fields:
+                    return {"success": False, "message": f"Missing required OCI configuration: {', '.join(missing_fields)}"}
+                
+                if not oci_config.get('key_content'):
+                    return {"success": False, "message": "Private key is required for API key authentication"}
+                
+                kms_crypto_client = oci.key_management.KmsCryptoClient(oci_config, service_endpoint=crypto_endpoint)
             
-            return {"success": True, "message": f"OCI KMS connection successful. Key '{key.data.display_name}' accessible."}
+            # Test by encrypting a small piece of data
+            test_data = "vault-unseal-test"
+            import base64
+            plaintext_b64 = base64.b64encode(test_data.encode()).decode()
+            
+            encrypt_response = kms_crypto_client.encrypt(
+                oci.key_management.models.EncryptDataDetails(
+                    key_id=key_id,
+                    plaintext=plaintext_b64
+                )
+            )
+            
+            return {"success": True, "message": f"OCI KMS connection successful. Key can encrypt data."}
             
         except ImportError:
             return {"success": False, "message": "oci SDK not installed. Cannot test OCI KMS."}

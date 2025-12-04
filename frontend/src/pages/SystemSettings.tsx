@@ -66,6 +66,10 @@ const SystemSettings: React.FC = () => {
   const [activeUnsealMethod, setActiveUnsealMethod] = useState<string | null>(null)
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
   
+  // Quick Import State for KMS configs
+  const [ociConfigImport, setOciConfigImport] = useState('')
+  const [awsCredentialsImport, setAwsCredentialsImport] = useState('')
+  
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
       common_name: window.location.hostname,
@@ -74,8 +78,14 @@ const SystemSettings: React.FC = () => {
     }
   })
 
-  // Helper: Parse OCI Config File format
-  const parseOciConfig = (configText: string) => {
+  // Helper: Parse OCI Config File format and apply to form
+  const applyOciConfig = () => {
+    const configText = ociConfigImport
+    if (!configText) {
+      toast.error('No config to apply')
+      return
+    }
+    
     const lines = configText.split('\n')
     const config: Record<string, string> = {}
     
@@ -89,17 +99,29 @@ const SystemSettings: React.FC = () => {
       }
     }
     
+    let fieldsApplied = 0
     // Map OCI config keys to our form fields
-    if (config.user) updateSealFormField('auth_type_api_key_user_ocid', config.user)
-    if (config.fingerprint) updateSealFormField('auth_type_api_key_fingerprint', config.fingerprint)
-    if (config.tenancy) updateSealFormField('auth_type_api_key_tenancy_ocid', config.tenancy)
-    if (config.region) updateSealFormField('region', config.region)
+    if (config.user) { updateSealFormField('auth_type_api_key_user_ocid', config.user); fieldsApplied++ }
+    if (config.fingerprint) { updateSealFormField('auth_type_api_key_fingerprint', config.fingerprint); fieldsApplied++ }
+    if (config.tenancy) { updateSealFormField('auth_type_api_key_tenancy_ocid', config.tenancy); fieldsApplied++ }
+    if (config.region) { updateSealFormField('region', config.region); fieldsApplied++ }
     
-    toast.success('OCI configuration parsed successfully')
+    if (fieldsApplied > 0) {
+      toast.success(`Applied ${fieldsApplied} fields from OCI config`)
+      setOciConfigImport('')
+    } else {
+      toast.error('No valid OCI config fields found')
+    }
   }
 
-  // Helper: Parse AWS Credentials File format
-  const parseAwsCredentials = (configText: string) => {
+  // Helper: Parse AWS Credentials File format and apply to form
+  const applyAwsCredentials = () => {
+    const configText = awsCredentialsImport
+    if (!configText) {
+      toast.error('No credentials to apply')
+      return
+    }
+    
     const lines = configText.split('\n')
     const config: Record<string, string> = {}
     
@@ -113,12 +135,18 @@ const SystemSettings: React.FC = () => {
       }
     }
     
+    let fieldsApplied = 0
     // Map AWS credential keys to our form fields
-    if (config.aws_access_key_id) updateSealFormField('access_key', config.aws_access_key_id)
-    if (config.aws_secret_access_key) updateSealFormField('secret_key', config.aws_secret_access_key)
-    if (config.region) updateSealFormField('region', config.region)
+    if (config.aws_access_key_id) { updateSealFormField('access_key', config.aws_access_key_id); fieldsApplied++ }
+    if (config.aws_secret_access_key) { updateSealFormField('secret_key', config.aws_secret_access_key); fieldsApplied++ }
+    if (config.region) { updateSealFormField('region', config.region); fieldsApplied++ }
     
-    toast.success('AWS credentials parsed successfully')
+    if (fieldsApplied > 0) {
+      toast.success(`Applied ${fieldsApplied} fields from AWS credentials`)
+      setAwsCredentialsImport('')
+    } else {
+      toast.error('No valid AWS credential fields found')
+    }
   }
 
   // Helper: Handle file upload for PEM/JSON files
@@ -1536,27 +1564,24 @@ const SystemSettings: React.FC = () => {
                               {/* Quick Import Section */}
                               <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
                                 <p className="text-xs text-blue-700 mb-2">
-                                  <strong>Quick Import:</strong> Paste your AWS credentials file to auto-fill
+                                  <strong>Quick Import:</strong> Paste your AWS credentials file
                                 </p>
                                 <textarea
                                   placeholder="[default]&#10;aws_access_key_id = AKIA...&#10;aws_secret_access_key = ...&#10;region = us-east-1"
                                   rows={3}
+                                  value={awsCredentialsImport}
+                                  onChange={(e) => setAwsCredentialsImport(e.target.value)}
                                   className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-xs"
-                                  onPaste={(e) => {
-                                    const text = e.clipboardData.getData('text')
-                                    if (text.includes('aws_access_key_id') || text.includes('aws_secret_access_key')) {
-                                      e.preventDefault()
-                                      parseAwsCredentials(text)
-                                    }
-                                  }}
-                                  onChange={(e) => {
-                                    const text = e.target.value
-                                    if (text.includes('aws_access_key_id') || text.includes('aws_secret_access_key')) {
-                                      parseAwsCredentials(text)
-                                      e.target.value = ''
-                                    }
-                                  }}
                                 />
+                                {awsCredentialsImport && (
+                                  <button
+                                    type="button"
+                                    onClick={applyAwsCredentials}
+                                    className="mt-2 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                  >
+                                    Apply Credentials
+                                  </button>
+                                )}
                               </div>
 
                               <div className="grid grid-cols-2 gap-3">
@@ -1749,32 +1774,6 @@ const SystemSettings: React.FC = () => {
                           {editingProvider === 'ocikms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Oracle OCI KMS Settings</h4>
-                              
-                              {/* Quick Import Section */}
-                              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
-                                <p className="text-xs text-blue-700 mb-2">
-                                  <strong>Quick Import:</strong> Paste your OCI config file preview to auto-fill credentials
-                                </p>
-                                <textarea
-                                  placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..xxx&#10;fingerprint=xx:xx:xx...&#10;tenancy=ocid1.tenancy.oc1..xxx&#10;region=us-ashburn-1"
-                                  rows={4}
-                                  className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-xs"
-                                  onPaste={(e) => {
-                                    const text = e.clipboardData.getData('text')
-                                    if (text.includes('user=') || text.includes('tenancy=')) {
-                                      e.preventDefault()
-                                      parseOciConfig(text)
-                                    }
-                                  }}
-                                  onChange={(e) => {
-                                    const text = e.target.value
-                                    if (text.includes('user=') || text.includes('tenancy=')) {
-                                      parseOciConfig(text)
-                                      e.target.value = ''
-                                    }
-                                  }}
-                                />
-                              </div>
 
                               <div>
                                 <label className="block text-xs font-medium text-gray-600">Key OCID</label>
@@ -1823,6 +1822,30 @@ const SystemSettings: React.FC = () => {
                               {!sealFormData.auth_type_use_instance_principal && (
                                 <div className="space-y-3 border-t pt-3 mt-3">
                                   <p className="text-xs text-gray-500 font-medium">API Key Authentication</p>
+                                  
+                                  {/* Quick Import Section - only for API Key auth */}
+                                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                    <p className="text-xs text-blue-700 mb-2">
+                                      <strong>Quick Import:</strong> Paste your OCI config file preview
+                                    </p>
+                                    <textarea
+                                      placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..xxx&#10;fingerprint=xx:xx:xx...&#10;tenancy=ocid1.tenancy.oc1..xxx&#10;region=us-ashburn-1"
+                                      rows={4}
+                                      value={ociConfigImport}
+                                      onChange={(e) => setOciConfigImport(e.target.value)}
+                                      className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-xs"
+                                    />
+                                    {ociConfigImport && (
+                                      <button
+                                        type="button"
+                                        onClick={applyOciConfig}
+                                        className="mt-2 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                      >
+                                        Apply Config
+                                      </button>
+                                    )}
+                                  </div>
+
                                   <div className="grid grid-cols-2 gap-3">
                                     <div>
                                       <label className="block text-xs font-medium text-gray-600">Tenancy OCID</label>
