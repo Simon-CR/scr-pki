@@ -1271,11 +1271,17 @@ def _store_in_aws_secrets_manager(kms_config: dict, secret_name: str, secret_dat
         access_key = kms_config.get('access_key')
         secret_key = kms_config.get('secret_key')
         
-        # Decrypt credentials if encrypted
+        # Try to decrypt credentials - if it fails, assume already plaintext
         if access_key:
-            access_key = decrypt_value(access_key, db)
+            try:
+                access_key = decrypt_value(access_key)
+            except Exception:
+                pass
         if secret_key:
-            secret_key = decrypt_value(secret_key, db)
+            try:
+                secret_key = decrypt_value(secret_key)
+            except Exception:
+                pass
         
         # Create Secrets Manager client
         if access_key and secret_key:
@@ -1322,7 +1328,12 @@ def _store_in_gcp_secret_manager(kms_config: dict, secret_name: str, secret_data
         credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
         
         if credentials_json:
-            credentials_json = decrypt_value(credentials_json, db)
+            # Try to decrypt - if it fails, assume it's already plaintext
+            try:
+                credentials_json = decrypt_value(credentials_json)
+            except Exception:
+                pass  # Already decrypted or plaintext JSON
+            
             creds_dict = json.loads(credentials_json)
             credentials = service_account.Credentials.from_service_account_info(creds_dict)
             client = secretmanager.SecretManagerServiceClient(credentials=credentials)
@@ -1376,9 +1387,12 @@ def _store_in_azure_keyvault(kms_config: dict, secret_name: str, secret_data: st
         client_id = kms_config.get('client_id')
         client_secret = kms_config.get('client_secret')
         
-        # Decrypt credentials
+        # Try to decrypt credentials - if it fails, assume already plaintext
         if client_secret:
-            client_secret = decrypt_value(client_secret, db)
+            try:
+                client_secret = decrypt_value(client_secret)
+            except Exception:
+                pass  # Already decrypted or plaintext
         
         vault_url = f"https://{vault_name}.vault.azure.net"
         
@@ -1479,7 +1493,7 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         
         # Store the encrypted data reference in our database
         encrypted_keys_config = db.query(SystemConfig).filter(
-            SystemConfig.key == "replicated_keys_oci"
+            SystemConfig.key == "replicated_keys_ocikms"
         ).first()
         
         import json
@@ -1494,7 +1508,7 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
             encrypted_keys_config.value = json.dumps(replicated_data)
         else:
             encrypted_keys_config = SystemConfig(
-                key="replicated_keys_oci",
+                key="replicated_keys_ocikms",
                 value=json.dumps(replicated_data)
             )
             db.add(encrypted_keys_config)
@@ -1560,8 +1574,12 @@ def _store_in_vault_transit(kms_config: dict, secret_name: str, secret_data: str
         mount_path = kms_config.get('mount_path', 'transit')
         tls_skip_verify = kms_config.get('tls_skip_verify', False)
         
+        # Try to decrypt token - if it fails, assume already plaintext
         if token:
-            token = decrypt_value(token, db)
+            try:
+                token = decrypt_value(token)
+            except Exception:
+                pass
         
         client = hvac.Client(url=address, token=token, verify=not tls_skip_verify)
         
