@@ -1441,7 +1441,11 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
             
             private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
             if private_key:
-                private_key = decrypt_value(private_key)
+                # Try to decrypt - if it fails, assume it's already plaintext
+                try:
+                    private_key = decrypt_value(private_key)
+                except Exception:
+                    pass  # Already decrypted or plaintext
             
             signer = oci.signer.Signer(
                 tenancy=config["tenancy"],
