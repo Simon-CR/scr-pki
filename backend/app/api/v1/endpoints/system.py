@@ -1188,8 +1188,12 @@ def replicate_unseal_keys(
         )
     
     try:
-        kms_config = json.loads(config.value)
-    except:
+        from app.core.security import decrypt_value
+        # Config is encrypted, need to decrypt first
+        decrypted = decrypt_value(config.value, db)
+        kms_config = json.loads(decrypted)
+    except Exception as e:
+        logger.error(f"Failed to decrypt/parse config for {request.destination}: {e}")
         return KeyReplicationResponse(
             success=False,
             message=f"Invalid configuration for {request.destination}",
@@ -2174,7 +2178,7 @@ def save_provider_seal_config(
     Use the unseal-priority endpoint to set which provider is used.
     """
     import json
-    from app.core.security import encrypt_value
+    from app.core.security import encrypt_value, decrypt_value
     
     provider = provider.lower()
     valid_providers = ['transit', 'awskms', 'gcpckms', 'azurekeyvault', 'ocikms', 'alicloudkms']
@@ -2185,17 +2189,29 @@ def save_provider_seal_config(
             detail=f"Invalid provider. Must be one of: {', '.join(valid_providers)}"
         )
     
+    config_key = f"vault_seal_{provider}"
+    existing = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    
+    # If there's existing config, merge with new values (preserving secrets not sent)
+    existing_config = {}
+    if existing:
+        try:
+            decrypted = decrypt_value(existing.value)
+            existing_config = json.loads(decrypted)
+        except:
+            pass
+    
+    # Merge: new values overwrite, but keep existing values for fields not sent
     full_config = {
+        **existing_config,  # Start with existing config
         'provider': provider,
         'enabled': request.enabled,
-        **request.config
+        **request.config  # Overwrite with new values
     }
     
     # Encrypt and store
     encrypted = encrypt_value(json.dumps(full_config))
-    config_key = f"vault_seal_{provider}"
     
-    existing = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
     if existing:
         existing.value = encrypted
     else:

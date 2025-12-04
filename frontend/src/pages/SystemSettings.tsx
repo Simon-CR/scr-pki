@@ -523,10 +523,20 @@ const SystemSettings: React.FC = () => {
 
     setSealConfigLoading(true)
     try {
+      // Filter out masked values (those starting with ••••) to preserve existing secrets
+      const cleanedConfig: Record<string, string | boolean | number> = {}
+      for (const [key, value] of Object.entries(sealFormData)) {
+        if (typeof value === 'string' && value.startsWith('••••')) {
+          // Skip masked values - backend will keep existing value
+          continue
+        }
+        cleanedConfig[key] = value
+      }
+      
       const request: SealConfigRequest = {
         provider: currentProvider as SealProvider,
         enabled: currentProvider !== 'shamir',
-        config: sealFormData as Record<string, string | boolean | number>
+        config: cleanedConfig
       }
       
       let result
