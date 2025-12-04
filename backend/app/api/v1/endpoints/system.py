@@ -1754,16 +1754,27 @@ def test_seal_config(
         # Test OCI KMS connectivity
         try:
             import oci
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Debug: log received config keys
+            logger.info(f"OCI KMS test - received config keys: {list(config.keys())}")
             
             # Get crypto endpoint (required for KMS operations)
-            crypto_endpoint = config.get('crypto_endpoint', '')
+            crypto_endpoint = config.get('crypto_endpoint', '').strip()
             if not crypto_endpoint:
                 return {"success": False, "message": "Crypto Endpoint is required for OCI KMS"}
             
-            # Get key ID
-            key_id = config.get('key_id', '')
+            # Get key ID and validate format
+            key_id = config.get('key_id', '').strip()
+            logger.info(f"OCI KMS test - key_id value: '{key_id}'")
+            
             if not key_id:
-                return {"success": False, "message": "Key ID (OCID) is required"}
+                return {"success": False, "message": f"Key ID (OCID) is required. Received config keys: {list(config.keys())}"}
+            
+            # Validate key OCID format
+            if not key_id.startswith('ocid1.key.'):
+                return {"success": False, "message": f"Invalid Key OCID format. Expected 'ocid1.key.oc1...' but got: '{key_id[:50] if len(key_id) > 50 else key_id}'"}
             
             # Check if using instance principal
             if config.get('auth_type_use_instance_principal'):
