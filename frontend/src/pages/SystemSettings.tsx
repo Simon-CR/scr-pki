@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, GripVertical, Settings } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
