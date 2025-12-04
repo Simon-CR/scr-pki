@@ -2322,9 +2322,34 @@ def test_seal_config(
     Attempts to connect to the KMS/Transit endpoint to verify credentials.
     """
     import httpx
+    import json
+    from app.core.security import decrypt_value
     
     provider = request.provider.lower()
-    config = request.config
+    config = dict(request.config)  # Make a mutable copy
+    
+    # Check for masked values (start with ••••) and replace with actual stored values
+    sensitive_fields = ['token', 'secret_key', 'client_secret', 'private_key', 'credentials_json', 'credentials', 'access_key', 'auth_type_api_key_private_key']
+    has_masked_values = any(
+        isinstance(config.get(field), str) and config.get(field, '').startswith('••••')
+        for field in sensitive_fields
+    )
+    
+    if has_masked_values:
+        # Load stored config to get actual sensitive values
+        config_key = f"vault_seal_{provider}"
+        stored_config = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+        if stored_config:
+            try:
+                decrypted = decrypt_value(stored_config.value)
+                stored_data = json.loads(decrypted)
+                # Replace masked values with stored values
+                for field in sensitive_fields:
+                    if isinstance(config.get(field), str) and config.get(field, '').startswith('••••'):
+                        if stored_data.get(field):
+                            config[field] = stored_data[field]
+            except Exception as e:
+                logger.warning(f"Failed to load stored config for masked values: {e}")
     
     if provider == "transit":
         # Test Transit connectivity
@@ -2430,10 +2455,18 @@ def test_seal_config(
             logger.info(f"GCP KMS test - checking key: {key_name}")
             logger.info(f"GCP KMS test - service account: {creds_dict.get('client_email', 'unknown')}")
             
-            # Try to get the key
-            key = client.get_crypto_key(request={"name": key_name})
+            # Test by encrypting a small piece of data (tests actual encrypt capability)
+            import base64
+            test_plaintext = base64.b64encode(b"vault-unseal-test").decode('utf-8')
             
-            return {"success": True, "message": f"GCP KMS connection successful. Key '{crypto_key}' accessible."}
+            encrypt_response = client.encrypt(
+                request={
+                    "name": key_name,
+                    "plaintext": test_plaintext.encode('utf-8')
+                }
+            )
+            
+            return {"success": True, "message": f"GCP KMS connection successful. Key '{crypto_key}' can encrypt data."}
             
         except ImportError:
             return {"success": False, "message": "google-cloud-kms not installed. Cannot test GCP KMS."}
