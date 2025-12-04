@@ -1171,8 +1171,14 @@ def replicate_unseal_keys(
         )
     
     # Step 2: Get the destination KMS configuration
-    config_key = f"seal_{request.destination}"
+    # Try both naming conventions: vault_seal_{provider} and seal_{provider}
+    config_key = f"vault_seal_{request.destination}"
     config = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    
+    if not config:
+        # Try alternate key format
+        config_key = f"seal_{request.destination}"
+        config = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
     
     if not config:
         return KeyReplicationResponse(
@@ -1308,7 +1314,8 @@ def _store_in_gcp_secret_manager(kms_config: dict, secret_name: str, secret_data
         import json
         
         project = kms_config.get('project')
-        credentials_json = kms_config.get('credentials')
+        # Support both 'credentials' and 'credentials_json' field names
+        credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
         
         if credentials_json:
             credentials_json = decrypt_value(credentials_json, db)
@@ -1661,8 +1668,11 @@ def get_key_replication_status(
     providers = ["awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "transit"]
     
     for provider in providers:
-        # Check if provider is configured and enabled
-        config = db.query(SystemConfig).filter(SystemConfig.key == f"seal_{provider}").first()
+        # Check if provider is configured and enabled (try both key formats)
+        config = db.query(SystemConfig).filter(SystemConfig.key == f"vault_seal_{provider}").first()
+        if not config:
+            config = db.query(SystemConfig).filter(SystemConfig.key == f"seal_{provider}").first()
+        
         if config:
             try:
                 provider_config = json.loads(config.value)
@@ -2365,15 +2375,23 @@ def test_seal_config(
             location = config.get('region')
             key_ring = config.get('key_ring')
             crypto_key = config.get('crypto_key')
-            credentials_json = config.get('credentials')
+            # Support both 'credentials' and 'credentials_json' field names
+            credentials_json = config.get('credentials') or config.get('credentials_json')
+            
+            if not project or not location or not key_ring or not crypto_key:
+                return {"success": False, "message": "Missing required fields: project, region, key_ring, crypto_key"}
             
             if credentials_json:
                 import json
-                creds_dict = json.loads(credentials_json)
+                try:
+                    creds_dict = json.loads(credentials_json)
+                except json.JSONDecodeError as e:
+                    return {"success": False, "message": f"Invalid JSON in service account credentials: {str(e)}"}
                 credentials = service_account.Credentials.from_service_account_info(creds_dict)
                 client = kms.KeyManagementServiceClient(credentials=credentials)
             else:
-                client = kms.KeyManagementServiceClient()
+                # No credentials provided - will fail with ADC error
+                return {"success": False, "message": "Service Account JSON is required. Upload or paste your GCP service account key."}
             
             # Build the key name
             key_name = client.crypto_key_path(project, location, key_ring, crypto_key)
