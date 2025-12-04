@@ -1461,16 +1461,8 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         if vault_endpoint.endswith('/20180608'):
             vault_endpoint = vault_endpoint.replace('/20180608', '')
         
-        # Create secrets client with vault endpoint
-        # Use empty config when we have a custom signer - OCI SDK validates config fields
-        if use_instance_principal:
-            secrets_client = oci.secrets.SecretsClient(config={}, signer=signer)
-            vaults_client = oci.vault.VaultsClient(config={}, signer=signer)
-        else:
-            # Only pass region in config - other auth is in signer
-            minimal_config = {"region": region}
-            secrets_client = oci.secrets.SecretsClient(config=minimal_config, signer=signer)
-            vaults_client = oci.vault.VaultsClient(config=minimal_config, signer=signer)
+        # OCI SDK validates config dict fields even with custom signer
+        # Use empty config - signer handles auth, service_endpoint handles region
         
         # Encode the secret data as base64 (OCI requires this)
         encoded_data = base64.b64encode(secret_data.encode()).decode()
@@ -1484,20 +1476,12 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         if not crypto_endpoint:
             return {"success": False, "error": "Crypto endpoint not configured"}
         
-        if use_instance_principal:
-            crypto_client = oci.key_management.KmsCryptoClient(
-                config={}, 
-                signer=signer,
-                service_endpoint=crypto_endpoint
-            )
-        else:
-            # Use minimal config with just region - auth is in signer
-            minimal_config = {"region": kms_config.get('region')}
-            crypto_client = oci.key_management.KmsCryptoClient(
-                config=minimal_config, 
-                signer=signer,
-                service_endpoint=crypto_endpoint
-            )
+        # Use empty config dict - auth is handled by signer, region is in endpoint URL
+        crypto_client = oci.key_management.KmsCryptoClient(
+            config={}, 
+            signer=signer,
+            service_endpoint=crypto_endpoint
+        )
         
         # Encrypt the data with the key
         encrypt_response = crypto_client.encrypt(
