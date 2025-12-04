@@ -1407,28 +1407,41 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         import base64
         from app.core.security import decrypt_value
         
-        compartment_id = kms_config.get('compartment_ocid')
-        vault_id = kms_config.get('vault_ocid')
-        key_id = kms_config.get('key_ocid')
-        use_instance_principal = kms_config.get('use_instance_principal', False)
+        # Handle both old field names and new auth_type_ prefixed field names
+        key_id = kms_config.get('key_id') or kms_config.get('key_ocid')
+        use_instance_principal = kms_config.get('auth_type_use_instance_principal') or kms_config.get('use_instance_principal', False)
+        
+        if not key_id:
+            return {"success": False, "error": "Key ID (key_id or key_ocid) not configured"}
         
         if use_instance_principal:
             signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-            secrets_client = oci.vault.VaultsClient(config={}, signer=signer)
-            kms_client = oci.key_management.KmsCryptoClient(config={}, signer=signer)
         else:
-            # Build config from stored values
+            # Build config from stored values - try both old and new field names
+            tenancy = kms_config.get('auth_type_api_key_tenancy_ocid') or kms_config.get('tenancy_ocid')
+            user = kms_config.get('auth_type_api_key_user_ocid') or kms_config.get('user_ocid')
+            fingerprint = kms_config.get('auth_type_api_key_fingerprint') or kms_config.get('fingerprint')
+            region = kms_config.get('region')
+            
+            if not all([tenancy, user, fingerprint, region]):
+                missing = []
+                if not tenancy: missing.append("tenancy_ocid")
+                if not user: missing.append("user_ocid")
+                if not fingerprint: missing.append("fingerprint")
+                if not region: missing.append("region")
+                return {"success": False, "error": f"Missing OCI config fields: {', '.join(missing)}"}
+            
             config = {
-                "user": kms_config.get('user_ocid'),
-                "fingerprint": kms_config.get('fingerprint'),
-                "tenancy": kms_config.get('tenancy_ocid'),
-                "region": kms_config.get('region'),
+                "user": user,
+                "fingerprint": fingerprint,
+                "tenancy": tenancy,
+                "region": region,
                 "key_file": None  # We'll use key_content
             }
             
-            private_key = kms_config.get('private_key')
+            private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
             if private_key:
-                private_key = decrypt_value(private_key, db)
+                private_key = decrypt_value(private_key)
             
             signer = oci.signer.Signer(
                 tenancy=config["tenancy"],
@@ -1512,7 +1525,7 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         
         db.commit()
         
-        return {"success": True, "identifier": f"oci:vault:{vault_id}:key:{key_id}"}
+        return {"success": True, "identifier": f"oci:kms:{crypto_endpoint}:key:{key_id}"}
     
     except Exception as e:
         import traceback
@@ -2412,6 +2425,9 @@ def test_seal_config(
             # Build the key name
             key_name = client.crypto_key_path(project, location, key_ring, crypto_key)
             
+            logger.info(f"GCP KMS test - checking key: {key_name}")
+            logger.info(f"GCP KMS test - service account: {creds_dict.get('client_email', 'unknown')}")
+            
             # Try to get the key
             key = client.get_crypto_key(request={"name": key_name})
             
@@ -2420,7 +2436,19 @@ def test_seal_config(
         except ImportError:
             return {"success": False, "message": "google-cloud-kms not installed. Cannot test GCP KMS."}
         except Exception as e:
-            return {"success": False, "message": f"GCP KMS test failed: {str(e)}"}
+            error_msg = str(e)
+            # Provide more helpful error messages
+            if "403" in error_msg and "denied" in error_msg.lower():
+                return {
+                    "success": False, 
+                    "message": f"GCP KMS permission denied. The service account needs 'Cloud KMS Viewer' or 'Cloud KMS CryptoKey Encrypter/Decrypter' role on the key/keyring/project. Key path: projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{crypto_key}. Error: {error_msg}"
+                }
+            elif "404" in error_msg or "not exist" in error_msg.lower():
+                return {
+                    "success": False,
+                    "message": f"GCP KMS key not found. Check project ({project}), location ({location}), keyring ({key_ring}), and key ({crypto_key}) are correct."
+                }
+            return {"success": False, "message": f"GCP KMS test failed: {error_msg}"}
     
     elif provider == "ocikms":
         # Test OCI KMS connectivity
