@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, GripVertical, Settings } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -60,6 +60,11 @@ const SystemSettings: React.FC = () => {
   const [migrationLoading, setMigrationLoading] = useState(false)
   const [migrationResult, setMigrationResult] = useState<SealMigrationResponse | null>(null)
   const [migrationUnsealKeys, setMigrationUnsealKeys] = useState<string[]>(['', '', ''])
+  
+  // Unseal Priority State
+  const [unsealMethods, setUnsealMethods] = useState<UnsealMethodStatus[]>([])
+  const [activeUnsealMethod, setActiveUnsealMethod] = useState<string | null>(null)
+  const [editingProvider, setEditingProvider] = useState<string | null>(null)
   
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
@@ -286,6 +291,53 @@ const SystemSettings: React.FC = () => {
     }
   }
 
+  // Unseal Priority Functions
+  const loadUnsealPriority = async () => {
+    try {
+      const response = await systemService.getUnsealPriority()
+      setUnsealMethods(response.methods)
+      setActiveUnsealMethod(response.active_method || null)
+    } catch (error) {
+      console.error('Failed to load unseal priority', error)
+    }
+  }
+
+  const moveMethodUp = async (index: number) => {
+    if (index === 0) return
+    const newMethods = [...unsealMethods]
+    const temp = newMethods[index]
+    newMethods[index] = newMethods[index - 1]
+    newMethods[index - 1] = temp
+    
+    // Update priorities
+    const priority = newMethods.map(m => m.method)
+    try {
+      await systemService.updateUnsealPriority(priority)
+      setUnsealMethods(newMethods.map((m, i) => ({ ...m, priority: i })))
+      toast.success('Priority updated')
+    } catch (error: any) {
+      toast.error('Failed to update priority')
+    }
+  }
+
+  const moveMethodDown = async (index: number) => {
+    if (index === unsealMethods.length - 1) return
+    const newMethods = [...unsealMethods]
+    const temp = newMethods[index]
+    newMethods[index] = newMethods[index + 1]
+    newMethods[index + 1] = temp
+    
+    // Update priorities
+    const priority = newMethods.map(m => m.method)
+    try {
+      await systemService.updateUnsealPriority(priority)
+      setUnsealMethods(newMethods.map((m, i) => ({ ...m, priority: i })))
+      toast.success('Priority updated')
+    } catch (error: any) {
+      toast.error('Failed to update priority')
+    }
+  }
+
   // Seal Configuration Functions
   const loadSealConfig = async () => {
     try {
@@ -295,8 +347,9 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
-      // Also load keys file status when loading seal config
+      // Also load keys file status and priority when loading seal config
       loadKeysFileStatus()
+      loadUnsealPriority()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
@@ -1104,81 +1157,141 @@ const SystemSettings: React.FC = () => {
                       </p>
 
                       {sealConfigExpanded && (
-                        <div className="mt-4 space-y-4">
-                          {/* Current Active Method Display */}
-                          <div className="p-4 bg-gray-50 border border-gray-200 rounded-md">
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Currently Active Method</h4>
-                            {keysFileStatus?.exists && keysFileStatus.key_count > 0 ? (
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center">
-                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-                                  <div>
-                                    <p className="text-sm font-medium text-green-700">Local Keys File (vault_keys.json)</p>
-                                    <p className="text-xs text-gray-500">{keysFileStatus.key_count} unseal keys stored - auto-unseal on restart</p>
+                        <div className="mt-4 space-y-6">
+                          {/* Priority-Based Method List */}
+                          <div>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-sm font-medium text-gray-900">Unseal Methods (Priority Order)</h4>
+                              <p className="text-xs text-gray-500">First available method will be used</p>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              {unsealMethods.map((method, index) => {
+                                const isActive = method.method === activeUnsealMethod
+                                const providerNames: Record<string, string> = {
+                                  'local_file': 'Local Keys File',
+                                  'transit': 'Self-Hosted Transit',
+                                  'awskms': 'AWS KMS',
+                                  'gcpckms': 'Google Cloud KMS',
+                                  'azurekeyvault': 'Azure Key Vault',
+                                  'ocikms': 'Oracle OCI KMS',
+                                  'alicloudkms': 'AliCloud KMS'
+                                }
+                                
+                                return (
+                                  <div
+                                    key={method.method}
+                                    className={`flex items-center justify-between p-3 rounded-md border ${
+                                      isActive 
+                                        ? 'bg-green-50 border-green-300' 
+                                        : method.configured 
+                                          ? 'bg-blue-50 border-blue-200' 
+                                          : 'bg-gray-50 border-gray-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center flex-1">
+                                      {/* Priority Controls */}
+                                      <div className="flex flex-col mr-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => moveMethodUp(index)}
+                                          disabled={index === 0}
+                                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                                        >
+                                          <ChevronUp className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => moveMethodDown(index)}
+                                          disabled={index === unsealMethods.length - 1}
+                                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                                        >
+                                          <ChevronDown className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                      
+                                      {/* Priority Number */}
+                                      <span className="w-6 h-6 flex items-center justify-center rounded-full bg-gray-200 text-xs font-medium text-gray-600 mr-3">
+                                        {index + 1}
+                                      </span>
+                                      
+                                      {/* Method Info */}
+                                      <div className="flex-1">
+                                        <div className="flex items-center">
+                                          <span className="text-sm font-medium text-gray-900">
+                                            {providerNames[method.method] || method.method}
+                                          </span>
+                                          {isActive && (
+                                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                              ACTIVE
+                                            </span>
+                                          )}
+                                          {method.configured && !isActive && (
+                                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                              READY
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-xs text-gray-500">{method.details}</p>
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Configure Button */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (method.method === 'local_file') {
+                                          setSealProvider('local_file')
+                                          setEditingProvider('local_file')
+                                        } else {
+                                          setSealProvider(method.method as SealProvider)
+                                          setEditingProvider(method.method)
+                                          // Load existing config for this provider
+                                          systemService.getProviderConfig(method.method).then(config => {
+                                            if (config.configured && config.config) {
+                                              setSealFormData(config.config)
+                                            } else {
+                                              setSealFormData({})
+                                            }
+                                          })
+                                        }
+                                      }}
+                                      className="ml-3 inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                                    >
+                                      <Settings className="h-4 w-4 mr-1" />
+                                      {method.configured ? 'Edit' : 'Configure'}
+                                    </button>
                                   </div>
-                                </div>
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                  ACTIVE
-                                </span>
-                              </div>
-                            ) : sealConfig?.configured && sealConfig.enabled ? (
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center">
-                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-                                  <div>
-                                    <p className="text-sm font-medium text-green-700">
-                                      {sealConfig.provider === 'transit' ? 'Self-Hosted Transit' :
-                                       sealConfig.provider === 'awskms' ? 'AWS KMS' :
-                                       sealConfig.provider === 'gcpckms' ? 'Google Cloud KMS' :
-                                       sealConfig.provider === 'azurekeyvault' ? 'Azure Key Vault' :
-                                       sealConfig.provider === 'ocikms' ? 'Oracle OCI KMS' :
-                                       sealConfig.provider === 'alicloudkms' ? 'AliCloud KMS' :
-                                       sealConfig.provider.toUpperCase()}
-                                    </p>
-                                    <p className="text-xs text-gray-500">KMS-based auto-unseal configured</p>
-                                  </div>
-                                </div>
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                  ACTIVE
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="flex items-center">
-                                <Lock className="h-5 w-5 text-gray-400 mr-2" />
-                                <div>
-                                  <p className="text-sm font-medium text-gray-700">Manual (Shamir Keys)</p>
-                                  <p className="text-xs text-gray-500">Requires manual unseal after each Vault restart</p>
-                                </div>
-                              </div>
+                                )
+                              })}
+                            </div>
+                            
+                            {unsealMethods.length === 0 && (
+                              <p className="text-sm text-gray-500 text-center py-4">Loading unseal methods...</p>
                             )}
                           </div>
 
-                          {/* Provider Selection */}
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Configure Unseal Method
-                            </label>
-                            <select
-                              value={sealProvider}
-                              onChange={(e) => {
-                                setSealProvider(e.target.value as SealProvider)
-                                setSealFormData({})
-                              }}
-                              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                            >
-                              <option value="shamir">Manual (Shamir Keys)</option>
-                              <option value="local_file">Local Keys File (vault_keys.json)</option>
-                              <option value="transit">Self-Hosted Transit (Another Vault)</option>
-                              <option value="awskms">AWS KMS</option>
-                              <option value="gcpckms">Google Cloud KMS</option>
-                              <option value="azurekeyvault">Azure Key Vault</option>
-                              <option value="ocikms">Oracle OCI KMS</option>
-                              <option value="alicloudkms">AliCloud KMS</option>
-                            </select>
-                          </div>
+                          {/* Configuration Panel - Shows when editing a provider */}
+                          {editingProvider && (
+                            <div className="border-t pt-4">
+                              <div className="flex items-center justify-between mb-4">
+                                <h4 className="text-sm font-medium text-gray-900">
+                                  Configure: {editingProvider === 'local_file' ? 'Local Keys File' : editingProvider.toUpperCase()}
+                                </h4>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingProvider(null)
+                                    setSealFormData({})
+                                  }}
+                                  className="text-gray-400 hover:text-gray-600"
+                                >
+                                  <XCircle className="h-5 w-5" />
+                                </button>
+                              </div>
 
                           {/* Local Keys File Configuration */}
-                          {sealProvider === 'local_file' && (
+                          {editingProvider === 'local_file' && (
                             <div className="space-y-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
                               <div className="flex items-start">
                                 <FileKey className="h-5 w-5 text-yellow-600 mt-0.5 mr-2 flex-shrink-0" />
@@ -1261,7 +1374,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* Transit Configuration */}
-                          {sealProvider === 'transit' && (
+                          {editingProvider === 'transit' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Transit Vault Settings</h4>
                               <div>
@@ -1322,7 +1435,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* AWS KMS Configuration */}
-                          {sealProvider === 'awskms' && (
+                          {editingProvider === 'awskms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">AWS KMS Settings</h4>
                               <div className="grid grid-cols-2 gap-3">
@@ -1371,7 +1484,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* GCP KMS Configuration */}
-                          {sealProvider === 'gcpckms' && (
+                          {editingProvider === 'gcpckms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Google Cloud KMS Settings</h4>
                               <div className="grid grid-cols-2 gap-3">
@@ -1432,7 +1545,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* Azure Key Vault Configuration */}
-                          {sealProvider === 'azurekeyvault' && (
+                          {editingProvider === 'azurekeyvault' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Azure Key Vault Settings</h4>
                               <div className="grid grid-cols-2 gap-3">
@@ -1491,7 +1604,8 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* OCI KMS Configuration */}
-                          {sealProvider === 'ocikms' && (
+                          {/* OCI KMS Configuration */}
+                          {editingProvider === 'ocikms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Oracle OCI KMS Settings</h4>
                               <div>
@@ -1540,7 +1654,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* AliCloud KMS Configuration */}
-                          {sealProvider === 'alicloudkms' && (
+                          {editingProvider === 'alicloudkms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">AliCloud KMS Settings</h4>
                               <div className="grid grid-cols-2 gap-3">
@@ -1589,7 +1703,7 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* Shamir (Manual) Info */}
-                          {sealProvider === 'shamir' && (
+                          {editingProvider === 'shamir' && (
                             <div className="p-4 bg-gray-50 rounded-md">
                               <p className="text-sm text-gray-600">
                                 With manual (Shamir) unsealing, you'll need to provide 3 of 5 unseal keys 
@@ -1600,9 +1714,9 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* Action Buttons - Hide for local_file since it has its own buttons */}
-                          {sealProvider !== 'local_file' && (
+                          {editingProvider !== 'local_file' && editingProvider !== null && (
                           <div className="flex items-center space-x-3 pt-4">
-                            {sealProvider !== 'shamir' && (
+                            {editingProvider !== 'shamir' && (
                               <button
                                 type="button"
                                 onClick={handleTestSealConfig}
@@ -1770,6 +1884,8 @@ const SystemSettings: React.FC = () => {
                                 <Copy className="h-3 w-3 mr-1" />
                                 Copy to clipboard
                               </button>
+                            </div>
+                          )}
                             </div>
                           )}
                         </div>

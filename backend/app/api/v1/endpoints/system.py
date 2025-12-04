@@ -869,6 +869,201 @@ def delete_vault_keys_file(
 
 
 # =============================================================================
+# Unseal Priority Configuration
+# =============================================================================
+
+class UnsealMethodStatus(BaseModel):
+    """Status of a single unseal method"""
+    method: str
+    configured: bool
+    enabled: bool
+    priority: int
+    last_used: Optional[str] = None
+    last_status: Optional[str] = None  # "success", "failed", "unavailable"
+    details: Optional[str] = None
+
+
+class UnsealPriorityResponse(BaseModel):
+    """Response with all configured unseal methods and their priority"""
+    methods: List[UnsealMethodStatus]
+    active_method: Optional[str] = None  # Currently used method
+
+
+class UnsealPriorityRequest(BaseModel):
+    """Request to update unseal priority order"""
+    priority: List[str]  # Ordered list of method names
+
+
+@router.get("/config/vault/unseal-priority", response_model=UnsealPriorityResponse)
+def get_unseal_priority(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get all configured unseal methods with their priority order.
+    
+    Methods are returned in priority order (first = highest priority).
+    The system will try each method in order until one succeeds.
+    """
+    import json
+    from pathlib import Path
+    from app.core.security import decrypt_value
+    
+    methods = []
+    
+    # Check local keys file
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+    ]
+    
+    local_file_configured = False
+    local_file_key_count = 0
+    for path in vault_keys_paths:
+        if path.exists():
+            try:
+                with open(path, 'r') as f:
+                    keys_data = json.load(f)
+                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                if keys:
+                    local_file_configured = True
+                    local_file_key_count = len(keys)
+                    break
+            except:
+                pass
+    
+    # Get priority order from database (or use default)
+    priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
+    if priority_config:
+        try:
+            priority_order = json.loads(priority_config.value)
+        except:
+            priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+    else:
+        priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+    
+    # Get all KMS configurations from database
+    kms_configs = {}
+    seal_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if seal_config:
+        try:
+            decrypted = decrypt_value(seal_config.value)
+            config = json.loads(decrypted)
+            if config.get('provider') and config.get('provider') != 'shamir':
+                kms_configs[config['provider']] = config
+        except:
+            pass
+    
+    # Also check for individual provider configs (for multiple KMS support)
+    for provider in ["transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]:
+        provider_config = db.query(SystemConfig).filter(
+            SystemConfig.key == f"vault_seal_{provider}"
+        ).first()
+        if provider_config:
+            try:
+                decrypted = decrypt_value(provider_config.value)
+                config = json.loads(decrypted)
+                kms_configs[provider] = config
+            except:
+                pass
+    
+    # Build method list in priority order
+    active_method = None
+    
+    # Add local file first if configured
+    if "local_file" in priority_order:
+        priority = priority_order.index("local_file")
+    else:
+        priority = 999
+    
+    methods.append(UnsealMethodStatus(
+        method="local_file",
+        configured=local_file_configured,
+        enabled=local_file_configured,
+        priority=priority,
+        details=f"{local_file_key_count} keys stored" if local_file_configured else "Not configured"
+    ))
+    
+    if local_file_configured and active_method is None:
+        active_method = "local_file"
+    
+    # Add KMS providers
+    provider_names = {
+        'transit': 'Self-Hosted Transit',
+        'awskms': 'AWS KMS',
+        'gcpckms': 'Google Cloud KMS',
+        'azurekeyvault': 'Azure Key Vault',
+        'ocikms': 'Oracle OCI KMS',
+        'alicloudkms': 'AliCloud KMS'
+    }
+    
+    for provider, name in provider_names.items():
+        if provider in priority_order:
+            priority = priority_order.index(provider)
+        else:
+            priority = 999
+        
+        configured = provider in kms_configs
+        enabled = configured and kms_configs.get(provider, {}).get('enabled', False)
+        
+        methods.append(UnsealMethodStatus(
+            method=provider,
+            configured=configured,
+            enabled=enabled,
+            priority=priority,
+            details=name if configured else f"{name} - Not configured"
+        ))
+        
+        if enabled and active_method is None:
+            active_method = provider
+    
+    # Sort by priority
+    methods.sort(key=lambda m: m.priority)
+    
+    return UnsealPriorityResponse(
+        methods=methods,
+        active_method=active_method
+    )
+
+
+@router.post("/config/vault/unseal-priority", status_code=status.HTTP_200_OK)
+def update_unseal_priority(
+    request: UnsealPriorityRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Update the priority order for unseal methods.
+    
+    Methods will be tried in the order specified until one succeeds.
+    """
+    import json
+    
+    valid_methods = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+    
+    # Validate all methods are valid
+    for method in request.priority:
+        if method not in valid_methods:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid method: {method}. Valid methods: {valid_methods}"
+            )
+    
+    # Save to database
+    config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
+    if config:
+        config.value = json.dumps(request.priority)
+    else:
+        config = SystemConfig(key="unseal_priority", value=json.dumps(request.priority))
+        db.add(config)
+    
+    db.commit()
+    
+    return {"message": "Unseal priority updated", "priority": request.priority}
+
+
+# =============================================================================
 # Vault Seal Configuration (KMS / Transit Auto-Unseal)
 # =============================================================================
 
@@ -1315,6 +1510,126 @@ def delete_seal_config(
             "2. Unseal with your Shamir unseal keys"
         ]
     }
+
+
+@router.post("/config/vault/seal/{provider}", status_code=status.HTTP_200_OK)
+def save_provider_seal_config(
+    provider: str,
+    request: SealConfigRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Save seal configuration for a specific provider.
+    
+    This allows configuring multiple KMS providers independently.
+    Use the unseal-priority endpoint to set which provider is used.
+    """
+    import json
+    from app.core.security import encrypt_value
+    
+    provider = provider.lower()
+    valid_providers = ['transit', 'awskms', 'gcpckms', 'azurekeyvault', 'ocikms', 'alicloudkms']
+    
+    if provider not in valid_providers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid provider. Must be one of: {', '.join(valid_providers)}"
+        )
+    
+    full_config = {
+        'provider': provider,
+        'enabled': request.enabled,
+        **request.config
+    }
+    
+    # Encrypt and store
+    encrypted = encrypt_value(json.dumps(full_config))
+    config_key = f"vault_seal_{provider}"
+    
+    existing = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    if existing:
+        existing.value = encrypted
+    else:
+        new_config = SystemConfig(key=config_key, value=encrypted)
+        db.add(new_config)
+    
+    db.commit()
+    
+    logger.info(f"Saved seal configuration for provider", provider=provider, enabled=request.enabled)
+    
+    return {
+        "message": f"{provider} configuration saved",
+        "provider": provider,
+        "enabled": request.enabled
+    }
+
+
+@router.get("/config/vault/seal/{provider}")
+def get_provider_seal_config(
+    provider: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get seal configuration for a specific provider.
+    Sensitive fields are masked.
+    """
+    import json
+    from app.core.security import decrypt_value
+    
+    provider = provider.lower()
+    config_key = f"vault_seal_{provider}"
+    
+    config_row = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    if not config_row:
+        return {"configured": False, "provider": provider}
+    
+    try:
+        decrypted = decrypt_value(config_row.value)
+        config = json.loads(decrypted)
+    except:
+        return {"configured": False, "provider": provider, "error": "Failed to decrypt config"}
+    
+    # Mask sensitive fields
+    sensitive_fields = ['token', 'secret_key', 'client_secret', 'private_key', 'credentials_json', 'access_key']
+    masked_config = {}
+    for key, value in config.items():
+        if key in sensitive_fields and value:
+            masked_config[key] = "••••••••" + str(value)[-4:] if len(str(value)) > 4 else "••••••••"
+        else:
+            masked_config[key] = value
+    
+    return {
+        "configured": True,
+        "provider": provider,
+        "enabled": config.get('enabled', False),
+        "config": masked_config
+    }
+
+
+@router.delete("/config/vault/seal/{provider}", status_code=status.HTTP_200_OK)
+def delete_provider_seal_config(
+    provider: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Delete seal configuration for a specific provider.
+    """
+    provider = provider.lower()
+    config_key = f"vault_seal_{provider}"
+    
+    config_row = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    if config_row:
+        db.delete(config_row)
+        db.commit()
+        return {"message": f"{provider} configuration deleted"}
+    
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"No configuration found for {provider}"
+    )
 
 
 @router.post("/config/vault/seal/test", status_code=status.HTTP_200_OK)

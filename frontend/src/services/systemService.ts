@@ -69,6 +69,30 @@ export interface KeysFileStatus {
   message: string
 }
 
+// Unseal Priority System
+export interface UnsealMethodStatus {
+  method: string
+  configured: boolean
+  enabled: boolean
+  priority: number
+  last_used?: string
+  last_status?: string
+  details?: string
+}
+
+export interface UnsealPriorityResponse {
+  methods: UnsealMethodStatus[]
+  active_method?: string
+}
+
+export interface ProviderConfigResponse {
+  configured: boolean
+  provider: string
+  enabled?: boolean
+  config?: Record<string, string | boolean | number>
+  error?: string
+}
+
 export interface Backup {
   filename: string
   size: number
@@ -193,6 +217,28 @@ export const systemService = {
 
   performSealMigration: async (data: SealMigrationRequest): Promise<SealMigrationResponse> => {
     return api.post<SealMigrationResponse>('/system/config/vault/seal/migrate', data)
+  },
+
+  // Unseal Priority System
+  getUnsealPriority: async (): Promise<UnsealPriorityResponse> => {
+    return api.get<UnsealPriorityResponse>('/system/config/vault/unseal-priority')
+  },
+
+  updateUnsealPriority: async (priority: string[]): Promise<{ message: string }> => {
+    return api.post<{ message: string }>('/system/config/vault/unseal-priority', { priority })
+  },
+
+  // Per-Provider Configuration
+  getProviderConfig: async (provider: string): Promise<ProviderConfigResponse> => {
+    return api.get<ProviderConfigResponse>(`/system/config/vault/seal/${provider}`)
+  },
+
+  saveProviderConfig: async (provider: string, data: SealConfigRequest): Promise<{ message: string }> => {
+    return api.post<{ message: string }>(`/system/config/vault/seal/${provider}`, data)
+  },
+
+  deleteProviderConfig: async (provider: string): Promise<{ message: string }> => {
+    return api.delete<{ message: string }>(`/system/config/vault/seal/${provider}`)
   },
 
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {
