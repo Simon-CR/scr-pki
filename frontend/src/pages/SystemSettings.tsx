@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -42,6 +42,14 @@ const SystemSettings: React.FC = () => {
   const [autoUnsealStatus, setAutoUnsealStatus] = useState<AutoUnsealStatusResponse | null>(null)
   const [autoUnsealLoading, setAutoUnsealLoading] = useState(false)
   
+  // Seal Configuration State
+  const [sealConfig, setSealConfig] = useState<SealConfigResponse | null>(null)
+  const [sealConfigExpanded, setSealConfigExpanded] = useState(false)
+  const [sealProvider, setSealProvider] = useState<SealProvider>('shamir')
+  const [sealConfigLoading, setSealConfigLoading] = useState(false)
+  const [sealTestLoading, setSealTestLoading] = useState(false)
+  const [sealFormData, setSealFormData] = useState<Record<string, string | boolean | number>>({})
+  
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
       common_name: window.location.hostname,
@@ -65,6 +73,7 @@ const SystemSettings: React.FC = () => {
       loadBackups()
       loadAlertSettings()
       loadSystemCertificate()
+      loadSealConfig()
     }
     init()
   }, [])
@@ -264,6 +273,101 @@ const SystemSettings: React.FC = () => {
     } finally {
       setAutoUnsealLoading(false)
     }
+  }
+
+  // Seal Configuration Functions
+  const loadSealConfig = async () => {
+    try {
+      const config = await systemService.getSealConfig()
+      setSealConfig(config)
+      if (config.configured && config.provider) {
+        setSealProvider(config.provider as SealProvider)
+        setSealFormData(config.details)
+      }
+    } catch (error) {
+      console.error('Failed to load seal config', error)
+    }
+  }
+
+  const handleSaveSealConfig = async () => {
+    const confirmed = await confirm({
+      title: 'Save Auto-Unseal Configuration',
+      message: sealProvider === 'shamir' 
+        ? 'This will disable auto-unseal. Vault will require manual unsealing after restarts.'
+        : 'After saving, you must restart Vault and perform seal migration with your current unseal keys. Continue?',
+      confirmLabel: 'Save Configuration',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setSealConfigLoading(true)
+    try {
+      const request: SealConfigRequest = {
+        provider: sealProvider,
+        enabled: sealProvider !== 'shamir',
+        config: sealFormData as Record<string, string | boolean | number>
+      }
+      const result = await systemService.saveSealConfig(request)
+      toast.success(result.message)
+      if (result.next_steps && result.next_steps.length > 0) {
+        toast(result.next_steps.join('\n'), { duration: 8000, icon: '📋' })
+      }
+      loadSealConfig()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to save seal configuration')
+    } finally {
+      setSealConfigLoading(false)
+    }
+  }
+
+  const handleTestSealConfig = async () => {
+    setSealTestLoading(true)
+    try {
+      const request: SealConfigRequest = {
+        provider: sealProvider,
+        enabled: true,
+        config: sealFormData as Record<string, string | boolean | number>
+      }
+      const result = await systemService.testSealConfig(request)
+      if (result.success === true) {
+        toast.success(result.message)
+      } else if (result.success === false) {
+        toast.error(result.message)
+      } else {
+        toast(result.message, { icon: 'ℹ️' })
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Test failed')
+    } finally {
+      setSealTestLoading(false)
+    }
+  }
+
+  const handleDeleteSealConfig = async () => {
+    const confirmed = await confirm({
+      title: 'Remove Auto-Unseal Configuration',
+      message: 'This will remove the auto-unseal configuration and revert to manual (Shamir) unsealing. Continue?',
+      confirmLabel: 'Remove Configuration',
+      variant: 'danger'
+    })
+    if (!confirmed) return
+
+    setSealConfigLoading(true)
+    try {
+      const result = await systemService.deleteSealConfig()
+      toast.success(result.message)
+      setSealProvider('shamir')
+      setSealFormData({})
+      loadSealConfig()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to remove configuration')
+    } finally {
+      setSealConfigLoading(false)
+    }
+  }
+
+  const updateSealFormField = (field: string, value: string | boolean) => {
+    setSealFormData(prev => ({ ...prev, [field]: value }))
   }
 
   const handleCopyKeys = () => {
@@ -848,6 +952,452 @@ const SystemSettings: React.FC = () => {
                         </p>
                       </div>
                     )}
+
+                    {/* Auto-Unseal Configuration Section */}
+                    <div className="mt-8 border-t border-gray-200 pt-6">
+                      <button
+                        type="button"
+                        onClick={() => setSealConfigExpanded(!sealConfigExpanded)}
+                        className="flex items-center justify-between w-full text-left"
+                      >
+                        <div className="flex items-center">
+                          <Shield className="h-5 w-5 text-indigo-500 mr-2" />
+                          <span className="text-lg font-medium text-gray-900">Auto-Unseal Configuration</span>
+                          {sealConfig?.configured && sealConfig.enabled && (
+                            <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              {sealConfig.provider.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                        {sealConfigExpanded ? (
+                          <ChevronUp className="h-5 w-5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="h-5 w-5 text-gray-400" />
+                        )}
+                      </button>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Configure automatic unsealing using KMS or Transit to avoid manual unseal on restarts.
+                      </p>
+
+                      {sealConfigExpanded && (
+                        <div className="mt-4 space-y-4">
+                          {/* Provider Selection */}
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Unseal Method
+                            </label>
+                            <select
+                              value={sealProvider}
+                              onChange={(e) => {
+                                setSealProvider(e.target.value as SealProvider)
+                                setSealFormData({})
+                              }}
+                              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                            >
+                              <option value="shamir">Manual (Shamir Keys)</option>
+                              <option value="transit">Self-Hosted Transit (Another Vault)</option>
+                              <option value="awskms">AWS KMS</option>
+                              <option value="gcpckms">Google Cloud KMS</option>
+                              <option value="azurekeyvault">Azure Key Vault</option>
+                              <option value="ocikms">Oracle OCI KMS</option>
+                              <option value="alicloudkms">AliCloud KMS</option>
+                            </select>
+                          </div>
+
+                          {/* Transit Configuration */}
+                          {sealProvider === 'transit' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">Transit Vault Settings</h4>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Vault Address</label>
+                                <input
+                                  type="text"
+                                  placeholder="http://kms-vault:8200"
+                                  value={(sealFormData.address as string) || ''}
+                                  onChange={(e) => updateSealFormField('address', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Transit Token</label>
+                                <input
+                                  type="password"
+                                  placeholder="hvs.xxxxxxxx"
+                                  value={(sealFormData.token as string) || ''}
+                                  onChange={(e) => updateSealFormField('token', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Key Name</label>
+                                  <input
+                                    type="text"
+                                    placeholder="autounseal"
+                                    value={(sealFormData.key_name as string) || 'autounseal'}
+                                    onChange={(e) => updateSealFormField('key_name', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Mount Path</label>
+                                  <input
+                                    type="text"
+                                    placeholder="transit"
+                                    value={(sealFormData.mount_path as string) || 'transit'}
+                                    onChange={(e) => updateSealFormField('mount_path', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  id="tls_skip_verify"
+                                  checked={(sealFormData.tls_skip_verify as boolean) || false}
+                                  onChange={(e) => updateSealFormField('tls_skip_verify', e.target.checked)}
+                                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                />
+                                <label htmlFor="tls_skip_verify" className="ml-2 block text-xs text-gray-600">
+                                  Skip TLS Verification (not recommended for production)
+                                </label>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* AWS KMS Configuration */}
+                          {sealProvider === 'awskms' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">AWS KMS Settings</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Region</label>
+                                  <input
+                                    type="text"
+                                    placeholder="us-east-1"
+                                    value={(sealFormData.region as string) || ''}
+                                    onChange={(e) => updateSealFormField('region', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">KMS Key ID / ARN</label>
+                                  <input
+                                    type="text"
+                                    placeholder="arn:aws:kms:..."
+                                    value={(sealFormData.kms_key_id as string) || ''}
+                                    onChange={(e) => updateSealFormField('kms_key_id', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Access Key ID (optional if using IAM role)</label>
+                                <input
+                                  type="text"
+                                  placeholder="AKIAIOSFODNN7EXAMPLE"
+                                  value={(sealFormData.access_key as string) || ''}
+                                  onChange={(e) => updateSealFormField('access_key', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Secret Access Key</label>
+                                <input
+                                  type="password"
+                                  placeholder="Secret key..."
+                                  value={(sealFormData.secret_key as string) || ''}
+                                  onChange={(e) => updateSealFormField('secret_key', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* GCP KMS Configuration */}
+                          {sealProvider === 'gcpckms' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">Google Cloud KMS Settings</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Project ID</label>
+                                  <input
+                                    type="text"
+                                    placeholder="my-project"
+                                    value={(sealFormData.project as string) || ''}
+                                    onChange={(e) => updateSealFormField('project', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Region</label>
+                                  <input
+                                    type="text"
+                                    placeholder="global"
+                                    value={(sealFormData.region as string) || ''}
+                                    onChange={(e) => updateSealFormField('region', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Key Ring</label>
+                                  <input
+                                    type="text"
+                                    placeholder="vault-keyring"
+                                    value={(sealFormData.key_ring as string) || ''}
+                                    onChange={(e) => updateSealFormField('key_ring', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Crypto Key</label>
+                                  <input
+                                    type="text"
+                                    placeholder="vault-unseal-key"
+                                    value={(sealFormData.crypto_key as string) || ''}
+                                    onChange={(e) => updateSealFormField('crypto_key', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Service Account JSON (paste content)</label>
+                                <textarea
+                                  rows={3}
+                                  placeholder='{"type": "service_account", ...}'
+                                  value={(sealFormData.credentials_json as string) || ''}
+                                  onChange={(e) => updateSealFormField('credentials_json', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm font-mono text-xs"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Azure Key Vault Configuration */}
+                          {sealProvider === 'azurekeyvault' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">Azure Key Vault Settings</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Vault Name</label>
+                                  <input
+                                    type="text"
+                                    placeholder="my-keyvault"
+                                    value={(sealFormData.vault_name as string) || ''}
+                                    onChange={(e) => updateSealFormField('vault_name', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Key Name</label>
+                                  <input
+                                    type="text"
+                                    placeholder="vault-unseal-key"
+                                    value={(sealFormData.key_name as string) || ''}
+                                    onChange={(e) => updateSealFormField('key_name', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Tenant ID</label>
+                                <input
+                                  type="text"
+                                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                  value={(sealFormData.tenant_id as string) || ''}
+                                  onChange={(e) => updateSealFormField('tenant_id', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Client ID</label>
+                                <input
+                                  type="text"
+                                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                  value={(sealFormData.client_id as string) || ''}
+                                  onChange={(e) => updateSealFormField('client_id', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Client Secret</label>
+                                <input
+                                  type="password"
+                                  placeholder="Client secret..."
+                                  value={(sealFormData.client_secret as string) || ''}
+                                  onChange={(e) => updateSealFormField('client_secret', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* OCI KMS Configuration */}
+                          {sealProvider === 'ocikms' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">Oracle OCI KMS Settings</h4>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Key OCID</label>
+                                <input
+                                  type="text"
+                                  placeholder="ocid1.key.oc1.iad.xxxxx"
+                                  value={(sealFormData.key_id as string) || ''}
+                                  onChange={(e) => updateSealFormField('key_id', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Crypto Endpoint</label>
+                                <input
+                                  type="text"
+                                  placeholder="https://xxxxx-crypto.kms.us-ashburn-1.oraclecloud.com"
+                                  value={(sealFormData.crypto_endpoint as string) || ''}
+                                  onChange={(e) => updateSealFormField('crypto_endpoint', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Management Endpoint</label>
+                                <input
+                                  type="text"
+                                  placeholder="https://xxxxx-management.kms.us-ashburn-1.oraclecloud.com"
+                                  value={(sealFormData.management_endpoint as string) || ''}
+                                  onChange={(e) => updateSealFormField('management_endpoint', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  id="auth_type_api_key"
+                                  checked={(sealFormData.auth_type_api_key as boolean) || false}
+                                  onChange={(e) => updateSealFormField('auth_type_api_key', e.target.checked)}
+                                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                />
+                                <label htmlFor="auth_type_api_key" className="ml-2 block text-xs text-gray-600">
+                                  Use API Key Auth (instead of Instance Principal)
+                                </label>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* AliCloud KMS Configuration */}
+                          {sealProvider === 'alicloudkms' && (
+                            <div className="space-y-3 p-4 bg-gray-50 rounded-md">
+                              <h4 className="text-sm font-medium text-gray-700">AliCloud KMS Settings</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">Region</label>
+                                  <input
+                                    type="text"
+                                    placeholder="cn-hangzhou"
+                                    value={(sealFormData.region as string) || ''}
+                                    onChange={(e) => updateSealFormField('region', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600">KMS Key ID</label>
+                                  <input
+                                    type="text"
+                                    placeholder="key-xxxxx"
+                                    value={(sealFormData.kms_key_id as string) || ''}
+                                    onChange={(e) => updateSealFormField('kms_key_id', e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Access Key</label>
+                                <input
+                                  type="text"
+                                  placeholder="LTAI..."
+                                  value={(sealFormData.access_key as string) || ''}
+                                  onChange={(e) => updateSealFormField('access_key', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600">Secret Key</label>
+                                <input
+                                  type="password"
+                                  placeholder="Secret key..."
+                                  value={(sealFormData.secret_key as string) || ''}
+                                  onChange={(e) => updateSealFormField('secret_key', e.target.value)}
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Shamir (Manual) Info */}
+                          {sealProvider === 'shamir' && (
+                            <div className="p-4 bg-gray-50 rounded-md">
+                              <p className="text-sm text-gray-600">
+                                With manual (Shamir) unsealing, you'll need to provide 3 of 5 unseal keys 
+                                each time Vault restarts. This is the default and most secure option if 
+                                you have reliable access to your unseal keys.
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center space-x-3 pt-4">
+                            {sealProvider !== 'shamir' && (
+                              <button
+                                type="button"
+                                onClick={handleTestSealConfig}
+                                disabled={sealTestLoading}
+                                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                              >
+                                {sealTestLoading ? (
+                                  <LoadingSpinner size="sm" className="mr-2" />
+                                ) : (
+                                  <TestTube className="h-4 w-4 mr-2" />
+                                )}
+                                Test Connection
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={handleSaveSealConfig}
+                              disabled={sealConfigLoading}
+                              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                            >
+                              {sealConfigLoading ? (
+                                <LoadingSpinner size="sm" className="mr-2" />
+                              ) : (
+                                <Save className="h-4 w-4 mr-2" />
+                              )}
+                              Save Configuration
+                            </button>
+                            {sealConfig?.configured && sealConfig.enabled && (
+                              <button
+                                type="button"
+                                onClick={handleDeleteSealConfig}
+                                disabled={sealConfigLoading}
+                                className="inline-flex items-center px-3 py-2 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Remove
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Migration Notice */}
+                          {sealConfig?.requires_migration && (
+                            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                              <p className="text-sm text-yellow-800">
+                                ⚠️ <strong>Migration Required:</strong> {sealConfig.migration_instructions || 
+                                  'Restart Vault and unseal with your current keys using the -migrate flag.'}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

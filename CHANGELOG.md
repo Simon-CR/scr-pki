@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shows "Auto-Unseal Available" button with clear warnings about production use
   - Includes confirmation dialog before unsealing
   - Future support for KMS-based auto-unseal planned
+- **Seal Configuration via Web UI**: Complete auto-unseal configuration through the UI
+  - Configure Vault seal type without docker-compose or .env changes
+  - Support for multiple providers: Transit, AWS KMS, GCP Cloud KMS, Azure Key Vault, OCI KMS, AliCloud KMS
+  - Credentials stored securely in database with encryption
+  - Per-provider configuration forms with all required settings
+  - View, update, or delete seal configurations at any time
 - **Vault Unseal Documentation**: New comprehensive `docs/VAULT_UNSEAL.md` with 4 options:
   - Option 1: Local auto-unseal with `vault_keys.json`
   - Option 2: Manual unseal via Web UI

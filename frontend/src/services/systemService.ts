@@ -46,6 +46,23 @@ export interface AutoUnsealStatusResponse {
   message: string
 }
 
+export interface SealConfigResponse {
+  configured: boolean
+  provider: string
+  enabled: boolean
+  details: Record<string, string | boolean | number>
+  requires_migration: boolean
+  migration_instructions: string | null
+}
+
+export interface SealConfigRequest {
+  provider: string
+  enabled: boolean
+  config: Record<string, string | boolean | number>
+}
+
+export type SealProvider = 'shamir' | 'transit' | 'awskms' | 'gcpckms' | 'azurekeyvault' | 'ocikms' | 'alicloudkms'
+
 export interface Backup {
   filename: string
   size: number
@@ -122,6 +139,23 @@ export const systemService = {
 
   autoUnsealVault: async (): Promise<{ message: string; method: string }> => {
     return api.post<{ message: string; method: string }>('/system/config/vault/auto-unseal', {})
+  },
+
+  // Seal Configuration (KMS / Transit Auto-Unseal)
+  getSealConfig: async (): Promise<SealConfigResponse> => {
+    return api.get<SealConfigResponse>('/system/config/vault/seal')
+  },
+
+  saveSealConfig: async (data: SealConfigRequest): Promise<{ message: string; next_steps: string[] }> => {
+    return api.post<{ message: string; next_steps: string[] }>('/system/config/vault/seal', data)
+  },
+
+  deleteSealConfig: async (): Promise<{ message: string; next_steps: string[] }> => {
+    return api.delete<{ message: string; next_steps: string[] }>('/system/config/vault/seal')
+  },
+
+  testSealConfig: async (data: SealConfigRequest): Promise<{ success: boolean | null; message: string }> => {
+    return api.post<{ success: boolean | null; message: string }>('/system/config/vault/seal/test', data)
   },
 
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {

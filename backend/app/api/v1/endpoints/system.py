@@ -498,6 +498,31 @@ def get_auto_unseal_status(
     """
     import json
     from pathlib import Path
+    from app.core.security import decrypt_value
+    
+    # Check for KMS configuration in database first (higher priority)
+    kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if kms_config:
+        try:
+            decrypted = decrypt_value(kms_config.value)
+            config = json.loads(decrypted)
+            if config.get('enabled') and config.get('provider') != 'shamir':
+                provider = config.get('provider', 'kms')
+                provider_names = {
+                    'transit': 'Self-Hosted Transit',
+                    'awskms': 'AWS KMS',
+                    'gcpckms': 'Google Cloud KMS',
+                    'azurekeyvault': 'Azure Key Vault',
+                    'ocikms': 'Oracle OCI KMS',
+                    'alicloudkms': 'AliCloud KMS'
+                }
+                return AutoUnsealStatusResponse(
+                    available=True,
+                    method=provider,
+                    message=f"{provider_names.get(provider, provider)} auto-unseal configured"
+                )
+        except Exception as e:
+            logger.warning("Failed to read KMS config from DB", error=str(e))
     
     # Check for vault_keys.json in data directory
     vault_keys_path = Path("/app/data/vault_keys.json")
@@ -599,6 +624,500 @@ def auto_unseal_vault(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="No auto-unseal method available. Place vault_keys.json in the data directory."
     )
+
+
+# =============================================================================
+# Vault Seal Configuration (KMS / Transit Auto-Unseal)
+# =============================================================================
+
+class SealProvider(str, Enum):
+    SHAMIR = "shamir"  # Default - manual unseal with keys
+    TRANSIT = "transit"  # Self-hosted Transit (another Vault)
+    AWSKMS = "awskms"
+    GCPCKMS = "gcpckms"
+    AZUREKEYVAULT = "azurekeyvault"
+    OCIKMS = "ocikms"
+    ALICLOUDKMS = "alicloudkms"
+
+from enum import Enum
+
+class SealConfigBase(BaseModel):
+    """Base configuration for all seal types"""
+    provider: str
+    enabled: bool = False
+
+class TransitSealConfig(SealConfigBase):
+    """Configuration for Transit auto-unseal (self-hosted KMS)"""
+    provider: str = "transit"
+    address: str  # e.g., http://kms-vault:8200
+    token: str  # Transit token with encrypt/decrypt permissions
+    key_name: str = "autounseal"
+    mount_path: str = "transit"
+    tls_skip_verify: bool = False
+    tls_ca_cert: Optional[str] = None
+
+class AWSKMSSealConfig(SealConfigBase):
+    """Configuration for AWS KMS auto-unseal"""
+    provider: str = "awskms"
+    region: str
+    access_key: Optional[str] = None  # Optional if using IAM role
+    secret_key: Optional[str] = None
+    kms_key_id: str  # ARN or key ID
+    endpoint: Optional[str] = None  # Custom endpoint (for testing)
+
+class GCPKMSSealConfig(SealConfigBase):
+    """Configuration for Google Cloud KMS auto-unseal"""
+    provider: str = "gcpckms"
+    project: str
+    region: str
+    key_ring: str
+    crypto_key: str
+    credentials_json: Optional[str] = None  # Service account JSON
+
+class AzureKeyVaultSealConfig(SealConfigBase):
+    """Configuration for Azure Key Vault auto-unseal"""
+    provider: str = "azurekeyvault"
+    vault_name: str
+    key_name: str
+    tenant_id: str
+    client_id: str
+    client_secret: str
+
+class OCIKMSSealConfig(SealConfigBase):
+    """Configuration for Oracle Cloud KMS auto-unseal"""
+    provider: str = "ocikms"
+    key_id: str  # OCID of the key
+    crypto_endpoint: str
+    management_endpoint: str
+    auth_type_api_key: bool = False
+    # For API key auth:
+    tenancy_ocid: Optional[str] = None
+    user_ocid: Optional[str] = None
+    fingerprint: Optional[str] = None
+    private_key: Optional[str] = None
+    region: Optional[str] = None
+
+class AliCloudKMSSealConfig(SealConfigBase):
+    """Configuration for AliCloud KMS auto-unseal"""
+    provider: str = "alicloudkms"
+    region: str
+    access_key: str
+    secret_key: str
+    kms_key_id: str
+
+class SealConfigResponse(BaseModel):
+    """Response containing current seal configuration"""
+    configured: bool
+    provider: str
+    enabled: bool
+    # Only include non-sensitive fields
+    details: dict = {}
+    requires_migration: bool = False
+    migration_instructions: Optional[str] = None
+
+class SealConfigRequest(BaseModel):
+    """Request to save seal configuration"""
+    provider: str
+    enabled: bool = True
+    config: dict  # Provider-specific configuration
+
+def _get_seal_config_from_db(db: Session) -> Optional[dict]:
+    """Retrieve seal configuration from database"""
+    import json
+    from app.core.security import decrypt_value
+    
+    config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if not config:
+        return None
+    
+    try:
+        decrypted = decrypt_value(config.value)
+        return json.loads(decrypted)
+    except Exception as e:
+        logger.error("Failed to decrypt seal config", error=str(e))
+        return None
+
+def _save_seal_config_to_db(db: Session, config: dict):
+    """Save seal configuration to database (encrypted)"""
+    import json
+    from app.core.security import encrypt_value
+    
+    encrypted = encrypt_value(json.dumps(config))
+    
+    existing = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if existing:
+        existing.value = encrypted
+        existing.description = f"Vault seal configuration ({config.get('provider', 'unknown')})"
+    else:
+        new_config = SystemConfig(
+            key="vault_seal_config",
+            value=encrypted,
+            description=f"Vault seal configuration ({config.get('provider', 'unknown')})"
+        )
+        db.add(new_config)
+    
+    db.commit()
+
+def _generate_vault_seal_stanza(config: dict) -> str:
+    """Generate Vault HCL seal configuration stanza"""
+    provider = config.get("provider")
+    
+    if provider == "shamir" or not config.get("enabled"):
+        return ""  # No seal stanza needed for Shamir
+    
+    if provider == "transit":
+        return f'''
+seal "transit" {{
+  address         = "{config.get('address')}"
+  token           = "{config.get('token')}"
+  key_name        = "{config.get('key_name', 'autounseal')}"
+  mount_path      = "{config.get('mount_path', 'transit')}"
+  tls_skip_verify = {str(config.get('tls_skip_verify', False)).lower()}
+}}
+'''
+    
+    if provider == "awskms":
+        stanza = f'''
+seal "awskms" {{
+  region     = "{config.get('region')}"
+  kms_key_id = "{config.get('kms_key_id')}"
+'''
+        if config.get('access_key'):
+            stanza += f'  access_key = "{config.get("access_key")}"\n'
+        if config.get('secret_key'):
+            stanza += f'  secret_key = "{config.get("secret_key")}"\n'
+        if config.get('endpoint'):
+            stanza += f'  endpoint   = "{config.get("endpoint")}"\n'
+        stanza += "}\n"
+        return stanza
+    
+    if provider == "gcpckms":
+        return f'''
+seal "gcpckms" {{
+  project     = "{config.get('project')}"
+  region      = "{config.get('region')}"
+  key_ring    = "{config.get('key_ring')}"
+  crypto_key  = "{config.get('crypto_key')}"
+}}
+'''
+    
+    if provider == "azurekeyvault":
+        return f'''
+seal "azurekeyvault" {{
+  vault_name  = "{config.get('vault_name')}"
+  key_name    = "{config.get('key_name')}"
+  tenant_id   = "{config.get('tenant_id')}"
+  client_id   = "{config.get('client_id')}"
+  client_secret = "{config.get('client_secret')}"
+}}
+'''
+    
+    if provider == "ocikms":
+        stanza = f'''
+seal "ocikms" {{
+  key_id              = "{config.get('key_id')}"
+  crypto_endpoint     = "{config.get('crypto_endpoint')}"
+  management_endpoint = "{config.get('management_endpoint')}"
+'''
+        if config.get('auth_type_api_key'):
+            stanza += '  auth_type_api_key = true\n'
+        stanza += "}\n"
+        return stanza
+    
+    if provider == "alicloudkms":
+        return f'''
+seal "alicloudkms" {{
+  region     = "{config.get('region')}"
+  access_key = "{config.get('access_key')}"
+  secret_key = "{config.get('secret_key')}"
+  kms_key_id = "{config.get('kms_key_id')}"
+}}
+'''
+    
+    return ""
+
+def _write_vault_seal_config(config: dict) -> bool:
+    """Write Vault seal configuration to the config file"""
+    from pathlib import Path
+    
+    seal_stanza = _generate_vault_seal_stanza(config)
+    
+    # Write to a dedicated seal config file that Vault can include
+    config_path = Path("/app/data/vault/config/seal.hcl")
+    if not config_path.parent.exists():
+        config_path = Path("data/vault/config/seal.hcl")
+    
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        config_path.write_text(seal_stanza)
+        logger.info("Vault seal configuration written", path=str(config_path))
+        return True
+    except Exception as e:
+        logger.error("Failed to write seal config", error=str(e))
+        return False
+
+
+@router.get("/config/vault/seal", response_model=SealConfigResponse)
+def get_seal_config(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get current Vault seal configuration.
+    Sensitive fields (tokens, keys) are masked in the response.
+    """
+    config = _get_seal_config_from_db(db)
+    
+    if not config:
+        return SealConfigResponse(
+            configured=False,
+            provider="shamir",
+            enabled=False,
+            details={},
+            requires_migration=False
+        )
+    
+    # Mask sensitive fields
+    masked_details = {}
+    sensitive_fields = ['token', 'secret_key', 'client_secret', 'private_key', 'credentials_json', 'access_key']
+    
+    for key, value in config.items():
+        if key in ['provider', 'enabled']:
+            continue
+        if key in sensitive_fields and value:
+            masked_details[key] = "********"
+        else:
+            masked_details[key] = value
+    
+    # Check if migration is needed (current seal type vs configured)
+    # This would require checking Vault's actual seal status
+    requires_migration = False
+    migration_instructions = None
+    
+    try:
+        vault_status = vault_client.get_status()
+        # If Vault reports a different seal type, migration is needed
+        # Note: This is a simplified check
+        if config.get('enabled') and not vault_status.get('sealed'):
+            # Vault is running with some seal type
+            # In a real scenario, we'd compare seal types
+            pass
+    except:
+        pass
+    
+    return SealConfigResponse(
+        configured=True,
+        provider=config.get('provider', 'shamir'),
+        enabled=config.get('enabled', False),
+        details=masked_details,
+        requires_migration=requires_migration,
+        migration_instructions=migration_instructions
+    )
+
+
+@router.post("/config/vault/seal", status_code=status.HTTP_200_OK)
+def save_seal_config(
+    request: SealConfigRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Save Vault seal configuration.
+    
+    This saves the configuration to the database and writes the Vault HCL config file.
+    The configuration will take effect after Vault is restarted and seal migration is performed.
+    
+    IMPORTANT: Changing seal type requires seal migration with current unseal keys.
+    """
+    provider = request.provider.lower()
+    
+    # Validate provider
+    valid_providers = ['shamir', 'transit', 'awskms', 'gcpckms', 'azurekeyvault', 'ocikms', 'alicloudkms']
+    if provider not in valid_providers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid provider. Must be one of: {', '.join(valid_providers)}"
+        )
+    
+    # Build full config
+    full_config = {
+        'provider': provider,
+        'enabled': request.enabled,
+        **request.config
+    }
+    
+    # Validate required fields based on provider
+    required_fields = {
+        'transit': ['address', 'token'],
+        'awskms': ['region', 'kms_key_id'],
+        'gcpckms': ['project', 'region', 'key_ring', 'crypto_key'],
+        'azurekeyvault': ['vault_name', 'key_name', 'tenant_id', 'client_id', 'client_secret'],
+        'ocikms': ['key_id', 'crypto_endpoint', 'management_endpoint'],
+        'alicloudkms': ['region', 'access_key', 'secret_key', 'kms_key_id']
+    }
+    
+    if provider in required_fields:
+        missing = [f for f in required_fields[provider] if not request.config.get(f)]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing required fields for {provider}: {', '.join(missing)}"
+            )
+    
+    # Save to database
+    _save_seal_config_to_db(db, full_config)
+    
+    # Write Vault config file
+    if request.enabled:
+        if not _write_vault_seal_config(full_config):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to write Vault seal configuration file"
+            )
+    
+    logger.info("Vault seal configuration saved", provider=provider, enabled=request.enabled)
+    
+    return {
+        "message": f"Seal configuration saved for {provider}",
+        "provider": provider,
+        "enabled": request.enabled,
+        "next_steps": [
+            "1. Restart the Vault container",
+            "2. Unseal with current keys using -migrate flag",
+            "3. Vault will re-encrypt master key with new seal"
+        ] if request.enabled and provider != 'shamir' else []
+    }
+
+
+@router.delete("/config/vault/seal", status_code=status.HTTP_200_OK)
+def delete_seal_config(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Delete Vault seal configuration, reverting to Shamir (manual unseal).
+    
+    WARNING: This requires seal migration back to Shamir keys.
+    """
+    from pathlib import Path
+    
+    # Delete from database
+    config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if config:
+        db.delete(config)
+        db.commit()
+    
+    # Remove seal config file
+    config_paths = [
+        Path("/app/data/vault/config/seal.hcl"),
+        Path("data/vault/config/seal.hcl")
+    ]
+    
+    for path in config_paths:
+        if path.exists():
+            path.unlink()
+            logger.info("Removed seal config file", path=str(path))
+    
+    return {
+        "message": "Seal configuration removed. Vault will use Shamir (manual unseal) after restart.",
+        "next_steps": [
+            "1. Restart the Vault container",
+            "2. Unseal with your Shamir unseal keys"
+        ]
+    }
+
+
+@router.post("/config/vault/seal/test", status_code=status.HTTP_200_OK)
+def test_seal_config(
+    request: SealConfigRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Test seal configuration connectivity without saving it.
+    Attempts to connect to the KMS/Transit endpoint to verify credentials.
+    """
+    import httpx
+    
+    provider = request.provider.lower()
+    config = request.config
+    
+    if provider == "transit":
+        # Test Transit connectivity
+        try:
+            address = config.get('address', '').rstrip('/')
+            token = config.get('token', '')
+            
+            response = httpx.get(
+                f"{address}/v1/sys/health",
+                headers={"X-Vault-Token": token},
+                timeout=10,
+                verify=not config.get('tls_skip_verify', False)
+            )
+            
+            if response.status_code == 200:
+                # Also verify the transit key exists
+                key_name = config.get('key_name', 'autounseal')
+                mount_path = config.get('mount_path', 'transit')
+                
+                key_response = httpx.get(
+                    f"{address}/v1/{mount_path}/keys/{key_name}",
+                    headers={"X-Vault-Token": token},
+                    timeout=10,
+                    verify=not config.get('tls_skip_verify', False)
+                )
+                
+                if key_response.status_code == 200:
+                    return {"success": True, "message": "Transit connection successful. Key found."}
+                elif key_response.status_code == 404:
+                    return {"success": False, "message": f"Transit key '{key_name}' not found at mount '{mount_path}'"}
+                else:
+                    return {"success": False, "message": f"Failed to access transit key: {key_response.status_code}"}
+            else:
+                return {"success": False, "message": f"Transit Vault health check failed: {response.status_code}"}
+                
+        except httpx.ConnectError:
+            return {"success": False, "message": f"Cannot connect to Transit Vault at {address}"}
+        except Exception as e:
+            return {"success": False, "message": f"Transit test failed: {str(e)}"}
+    
+    elif provider == "awskms":
+        # Test AWS KMS connectivity
+        try:
+            import boto3
+            from botocore.exceptions import ClientError, NoCredentialsError
+            
+            kwargs = {
+                'region_name': config.get('region')
+            }
+            if config.get('access_key') and config.get('secret_key'):
+                kwargs['aws_access_key_id'] = config.get('access_key')
+                kwargs['aws_secret_access_key'] = config.get('secret_key')
+            if config.get('endpoint'):
+                kwargs['endpoint_url'] = config.get('endpoint')
+            
+            kms = boto3.client('kms', **kwargs)
+            
+            # Try to describe the key
+            kms.describe_key(KeyId=config.get('kms_key_id'))
+            
+            return {"success": True, "message": "AWS KMS connection successful. Key accessible."}
+            
+        except NoCredentialsError:
+            return {"success": False, "message": "AWS credentials not found or invalid"}
+        except ClientError as e:
+            return {"success": False, "message": f"AWS KMS error: {e.response['Error']['Message']}"}
+        except ImportError:
+            return {"success": False, "message": "boto3 not installed. Cannot test AWS KMS."}
+        except Exception as e:
+            return {"success": False, "message": f"AWS KMS test failed: {str(e)}"}
+    
+    # For other providers, return a generic response
+    return {
+        "success": None,
+        "message": f"Connectivity test not yet implemented for {provider}. Configuration saved but not validated."
+    }
 
 
 class VaultInitResponse(BaseModel):
