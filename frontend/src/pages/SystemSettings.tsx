@@ -358,9 +358,11 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleSaveSealConfig = async () => {
+    // Use editingProvider if set (from priority panel), otherwise use sealProvider
+    const currentProvider = editingProvider || sealProvider
     const confirmed = await confirm({
       title: 'Save Auto-Unseal Configuration',
-      message: sealProvider === 'shamir' 
+      message: currentProvider === 'shamir' 
         ? 'This will disable auto-unseal. Vault will require manual unsealing after restarts.'
         : 'After saving, you must restart Vault and perform seal migration with your current unseal keys. Continue?',
       confirmLabel: 'Save Configuration',
@@ -371,8 +373,8 @@ const SystemSettings: React.FC = () => {
     setSealConfigLoading(true)
     try {
       const request: SealConfigRequest = {
-        provider: sealProvider,
-        enabled: sealProvider !== 'shamir',
+        provider: currentProvider as SealProvider,
+        enabled: currentProvider !== 'shamir',
         config: sealFormData as Record<string, string | boolean | number>
       }
       const result = await systemService.saveSealConfig(request)
@@ -389,10 +391,12 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleTestSealConfig = async () => {
+    // Use editingProvider if set (from priority panel), otherwise use sealProvider
+    const currentProvider = editingProvider || sealProvider
     setSealTestLoading(true)
     try {
       const request: SealConfigRequest = {
-        provider: sealProvider,
+        provider: currentProvider as SealProvider,
         enabled: true,
         config: sealFormData as Record<string, string | boolean | number>
       }
