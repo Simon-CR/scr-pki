@@ -66,12 +66,21 @@ class CertificateService:
         if validity_days is None:
             validity_days = settings.CERT_DEFAULT_VALIDITY_DAYS
         
-        # Warn if validity exceeds browser compliance (Apple requires ≤398 days)
-        # But allow it - user may have internal-only use cases
-        if validity_days > 398:
-            logger.warning(
-                "Certificate validity exceeds browser compliance limit (398 days). "
-                "This certificate may show warnings in browsers.",
+        # Log info about validity for compliance tracking
+        # ≤398 days: Full Apple PKI compliance
+        # ≤825 days: macOS 10.15/iOS 13 compatible  
+        # >825 days: Works with Firefox, Chrome, Opera (Safari may show warnings)
+        if validity_days > 825:
+            logger.info(
+                "Certificate validity exceeds macOS/iOS strict limit (825 days). "
+                "Works with Chrome/Firefox/Opera. Safari may show 'not standards compliant'.",
+                requested_days=validity_days,
+                common_name=common_name,
+            )
+        elif validity_days > 398:
+            logger.info(
+                "Certificate validity exceeds Apple PKI limit (398 days). "
+                "Compatible with macOS 10.15/iOS 13+.",
                 requested_days=validity_days,
                 common_name=common_name,
             )

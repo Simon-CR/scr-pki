@@ -15,18 +15,21 @@ const DEFAULT_VALIDITY_DAYS = 365
 const CUSTOM_VALIDITY_VALUE = 'custom'
 const DEFAULT_MONITORING_PORT = 443
 
-// Validity presets - Apple/Safari requires ≤398 days for full trust (since Sept 2020)
-// Longer durations will work but may show warnings in browsers
+// Validity presets with browser compatibility notes:
+// ≤398 days: Full Apple PKI compliance (Safari, all browsers)
+// ≤825 days: macOS 10.15/iOS 13 compatible
+// >825 days: Works with Firefox, Chrome, Opera (Safari may show "not standards compliant")
 const VALIDITY_PRESETS = [
-  { value: '90', label: '90 days', recommended: false },
-  { value: '180', label: '6 months', recommended: false },
-  { value: '365', label: '1 year ✓ Recommended', recommended: true },
-  { value: '398', label: '398 days (max browser-compliant)', recommended: false },
-  { value: '730', label: '2 years ⚠️', recommended: false },
-  { value: '1095', label: '3 years ⚠️', recommended: false },
-  { value: '1825', label: '5 years ⚠️', recommended: false },
-  { value: '3650', label: '10 years ⚠️', recommended: false },
-  { value: '7300', label: '20 years ⚠️', recommended: false },
+  { value: '90', label: '90 days', notice: '' },
+  { value: '180', label: '6 months', notice: '' },
+  { value: '365', label: '1 year ✓ Recommended', notice: '' },
+  { value: '398', label: '398 days (max Apple PKI)', notice: 'apple' },
+  { value: '730', label: '2 years', notice: '' },
+  { value: '825', label: '825 days (max Safari)', notice: 'safari' },
+  { value: '1095', label: '3 years', notice: '' },
+  { value: '1825', label: '5 years', notice: '' },
+  { value: '3650', label: '10 years', notice: '' },
+  { value: '7300', label: '20 years', notice: '' },
 ]
 
 type IssueFormState = {
@@ -1082,13 +1085,14 @@ const Certificates: React.FC = () => {
                       <option 
                         key={preset.value} 
                         value={preset.value}
-                        className={preset.recommended ? 'font-semibold' : ''}
                       >
                         {preset.label}
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">Options with ⚠️ exceed browser compliance limits.</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    ≤398 days: Full Apple/Safari compliance • ≤825 days: macOS 10.15/iOS 13 • Longer: Chrome/Firefox/Opera
+                  </p>
                 </div>
               </div>
 
