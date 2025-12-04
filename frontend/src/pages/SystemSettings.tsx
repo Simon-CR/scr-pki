@@ -74,6 +74,75 @@ const SystemSettings: React.FC = () => {
     }
   })
 
+  // Helper: Parse OCI Config File format
+  const parseOciConfig = (configText: string) => {
+    const lines = configText.split('\n')
+    const config: Record<string, string> = {}
+    
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('[') || trimmed.startsWith('#') || !trimmed) continue
+      
+      const match = trimmed.match(/^(\w+)\s*=\s*(.+)$/)
+      if (match) {
+        config[match[1].toLowerCase()] = match[2].trim()
+      }
+    }
+    
+    // Map OCI config keys to our form fields
+    if (config.user) updateSealFormField('auth_type_api_key_user_ocid', config.user)
+    if (config.fingerprint) updateSealFormField('auth_type_api_key_fingerprint', config.fingerprint)
+    if (config.tenancy) updateSealFormField('auth_type_api_key_tenancy_ocid', config.tenancy)
+    if (config.region) updateSealFormField('region', config.region)
+    
+    toast.success('OCI configuration parsed successfully')
+  }
+
+  // Helper: Parse AWS Credentials File format
+  const parseAwsCredentials = (configText: string) => {
+    const lines = configText.split('\n')
+    const config: Record<string, string> = {}
+    
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('[') || trimmed.startsWith('#') || !trimmed) continue
+      
+      const match = trimmed.match(/^(\w+)\s*=\s*(.+)$/)
+      if (match) {
+        config[match[1].toLowerCase()] = match[2].trim()
+      }
+    }
+    
+    // Map AWS credential keys to our form fields
+    if (config.aws_access_key_id) updateSealFormField('access_key', config.aws_access_key_id)
+    if (config.aws_secret_access_key) updateSealFormField('secret_key', config.aws_secret_access_key)
+    if (config.region) updateSealFormField('region', config.region)
+    
+    toast.success('AWS credentials parsed successfully')
+  }
+
+  // Helper: Handle file upload for PEM/JSON files
+  const handleFileUpload = (field: string, acceptType: 'pem' | 'json') => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = acceptType === 'pem' ? '.pem,.key' : '.json'
+    
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      
+      try {
+        const content = await file.text()
+        updateSealFormField(field, content)
+        toast.success(`${file.name} loaded successfully`)
+      } catch (error) {
+        toast.error('Failed to read file')
+      }
+    }
+    
+    input.click()
+  }
+
   useEffect(() => {
     // Check for tab query parameter
     const params = new URLSearchParams(window.location.search)
@@ -1463,6 +1532,33 @@ const SystemSettings: React.FC = () => {
                           {editingProvider === 'awskms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">AWS KMS Settings</h4>
+                              
+                              {/* Quick Import Section */}
+                              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                <p className="text-xs text-blue-700 mb-2">
+                                  <strong>Quick Import:</strong> Paste your AWS credentials file to auto-fill
+                                </p>
+                                <textarea
+                                  placeholder="[default]&#10;aws_access_key_id = AKIA...&#10;aws_secret_access_key = ...&#10;region = us-east-1"
+                                  rows={3}
+                                  className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-xs"
+                                  onPaste={(e) => {
+                                    const text = e.clipboardData.getData('text')
+                                    if (text.includes('aws_access_key_id') || text.includes('aws_secret_access_key')) {
+                                      e.preventDefault()
+                                      parseAwsCredentials(text)
+                                    }
+                                  }}
+                                  onChange={(e) => {
+                                    const text = e.target.value
+                                    if (text.includes('aws_access_key_id') || text.includes('aws_secret_access_key')) {
+                                      parseAwsCredentials(text)
+                                      e.target.value = ''
+                                    }
+                                  }}
+                                />
+                              </div>
+
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
                                   <label className="block text-xs font-medium text-gray-600">Region</label>
@@ -1557,14 +1653,35 @@ const SystemSettings: React.FC = () => {
                                 </div>
                               </div>
                               <div>
-                                <label className="block text-xs font-medium text-gray-600">Service Account JSON (paste content)</label>
+                                <div className="flex items-center justify-between">
+                                  <label className="block text-xs font-medium text-gray-600">Service Account JSON</label>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFileUpload('credentials_json', 'json')}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center"
+                                  >
+                                    <Upload className="h-3 w-3 mr-1" />
+                                    Browse .json file
+                                  </button>
+                                </div>
                                 <textarea
                                   rows={3}
-                                  placeholder='{"type": "service_account", ...}'
+                                  placeholder='{"type": "service_account", "project_id": "...", ...}'
                                   value={(sealFormData.credentials_json as string) || ''}
                                   onChange={(e) => updateSealFormField('credentials_json', e.target.value)}
                                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm font-mono text-xs"
                                 />
+                                {sealFormData.credentials_json && (
+                                  <p className="mt-1 text-xs text-green-600">
+                                    ✓ Service account loaded 
+                                    {(() => {
+                                      try {
+                                        const json = JSON.parse(sealFormData.credentials_json as string)
+                                        return json.client_email ? ` (${json.client_email})` : ''
+                                      } catch { return '' }
+                                    })()}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           )}
@@ -1629,10 +1746,36 @@ const SystemSettings: React.FC = () => {
                           )}
 
                           {/* OCI KMS Configuration */}
-                          {/* OCI KMS Configuration */}
                           {editingProvider === 'ocikms' && (
                             <div className="space-y-3 p-4 bg-gray-50 rounded-md">
                               <h4 className="text-sm font-medium text-gray-700">Oracle OCI KMS Settings</h4>
+                              
+                              {/* Quick Import Section */}
+                              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                <p className="text-xs text-blue-700 mb-2">
+                                  <strong>Quick Import:</strong> Paste your OCI config file preview to auto-fill credentials
+                                </p>
+                                <textarea
+                                  placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..xxx&#10;fingerprint=xx:xx:xx...&#10;tenancy=ocid1.tenancy.oc1..xxx&#10;region=us-ashburn-1"
+                                  rows={4}
+                                  className="block w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-xs"
+                                  onPaste={(e) => {
+                                    const text = e.clipboardData.getData('text')
+                                    if (text.includes('user=') || text.includes('tenancy=')) {
+                                      e.preventDefault()
+                                      parseOciConfig(text)
+                                    }
+                                  }}
+                                  onChange={(e) => {
+                                    const text = e.target.value
+                                    if (text.includes('user=') || text.includes('tenancy=')) {
+                                      parseOciConfig(text)
+                                      e.target.value = ''
+                                    }
+                                  }}
+                                />
+                              </div>
+
                               <div>
                                 <label className="block text-xs font-medium text-gray-600">Key OCID</label>
                                 <input
@@ -1654,7 +1797,7 @@ const SystemSettings: React.FC = () => {
                                 />
                               </div>
                               <div>
-                                <label className="block text-xs font-medium text-gray-600">Management Endpoint</label>
+                                <label className="block text-xs font-medium text-gray-600">Management Endpoint (optional)</label>
                                 <input
                                   type="text"
                                   placeholder="https://xxxxx-management.kms.us-ashburn-1.oraclecloud.com"
@@ -1672,56 +1815,70 @@ const SystemSettings: React.FC = () => {
                                   className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                                 />
                                 <label htmlFor="auth_type_use_instance_principal" className="ml-2 block text-xs text-gray-600">
-                                  Use Instance Principal (instead of API Key)
+                                  Use Instance Principal (only works on OCI compute instances)
                                 </label>
                               </div>
                               
                               {/* API Key Auth fields - shown when NOT using instance principal */}
                               {!sealFormData.auth_type_use_instance_principal && (
                                 <div className="space-y-3 border-t pt-3 mt-3">
-                                  <p className="text-xs text-gray-500">API Key Authentication</p>
-                                  <div>
-                                    <label className="block text-xs font-medium text-gray-600">Tenancy OCID</label>
-                                    <input
-                                      type="text"
-                                      placeholder="ocid1.tenancy.oc1..xxxxx"
-                                      value={(sealFormData.auth_type_api_key_tenancy_ocid as string) || ''}
-                                      onChange={(e) => updateSealFormField('auth_type_api_key_tenancy_ocid', e.target.value)}
-                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
+                                  <p className="text-xs text-gray-500 font-medium">API Key Authentication</p>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600">Tenancy OCID</label>
+                                      <input
+                                        type="text"
+                                        placeholder="ocid1.tenancy.oc1..xxxxx"
+                                        value={(sealFormData.auth_type_api_key_tenancy_ocid as string) || ''}
+                                        onChange={(e) => updateSealFormField('auth_type_api_key_tenancy_ocid', e.target.value)}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600">User OCID</label>
+                                      <input
+                                        type="text"
+                                        placeholder="ocid1.user.oc1..xxxxx"
+                                        value={(sealFormData.auth_type_api_key_user_ocid as string) || ''}
+                                        onChange={(e) => updateSealFormField('auth_type_api_key_user_ocid', e.target.value)}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600">Fingerprint</label>
+                                      <input
+                                        type="text"
+                                        placeholder="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+                                        value={(sealFormData.auth_type_api_key_fingerprint as string) || ''}
+                                        onChange={(e) => updateSealFormField('auth_type_api_key_fingerprint', e.target.value)}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600">Region</label>
+                                      <input
+                                        type="text"
+                                        placeholder="us-ashburn-1"
+                                        value={(sealFormData.region as string) || ''}
+                                        onChange={(e) => updateSealFormField('region', e.target.value)}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                      />
+                                    </div>
                                   </div>
                                   <div>
-                                    <label className="block text-xs font-medium text-gray-600">User OCID</label>
-                                    <input
-                                      type="text"
-                                      placeholder="ocid1.user.oc1..xxxxx"
-                                      value={(sealFormData.auth_type_api_key_user_ocid as string) || ''}
-                                      onChange={(e) => updateSealFormField('auth_type_api_key_user_ocid', e.target.value)}
-                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs font-medium text-gray-600">Fingerprint</label>
-                                    <input
-                                      type="text"
-                                      placeholder="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
-                                      value={(sealFormData.auth_type_api_key_fingerprint as string) || ''}
-                                      onChange={(e) => updateSealFormField('auth_type_api_key_fingerprint', e.target.value)}
-                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs font-medium text-gray-600">Region</label>
-                                    <input
-                                      type="text"
-                                      placeholder="us-ashburn-1"
-                                      value={(sealFormData.region as string) || ''}
-                                      onChange={(e) => updateSealFormField('region', e.target.value)}
-                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-xs font-medium text-gray-600">Private Key (PEM)</label>
+                                    <div className="flex items-center justify-between">
+                                      <label className="block text-xs font-medium text-gray-600">Private Key (PEM)</label>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleFileUpload('auth_type_api_key_private_key', 'pem')}
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center"
+                                      >
+                                        <Upload className="h-3 w-3 mr-1" />
+                                        Browse .pem file
+                                      </button>
+                                    </div>
                                     <textarea
                                       placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
                                       value={(sealFormData.auth_type_api_key_private_key as string) || ''}
@@ -1729,6 +1886,9 @@ const SystemSettings: React.FC = () => {
                                       rows={4}
                                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm font-mono text-xs"
                                     />
+                                    {sealFormData.auth_type_api_key_private_key && (
+                                      <p className="mt-1 text-xs text-green-600">✓ Private key loaded ({((sealFormData.auth_type_api_key_private_key as string).length / 1024).toFixed(1)} KB)</p>
+                                    )}
                                   </div>
                                 </div>
                               )}

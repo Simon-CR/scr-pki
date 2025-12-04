@@ -77,13 +77,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <nav className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
-            <div className="flex">
+            <div className="flex min-w-0">
               <div className="flex-shrink-0 flex items-center">
                 <h1 className="text-xl font-semibold text-gray-900">
                   SCR-PKI
                 </h1>
               </div>
-              <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
+              <div className="hidden sm:ml-6 sm:flex sm:space-x-4 lg:space-x-8 overflow-x-auto">
                 {[
                   { to: '/dashboard', label: 'Dashboard' },
                   { to: '/certificates', label: 'Certificates' },
@@ -111,9 +111,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 ))}
               </div>
             </div>
-            <div className="hidden sm:ml-6 sm:flex sm:items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-700">{user?.email}</span>
+            <div className="hidden sm:ml-6 sm:flex sm:items-center space-x-4 flex-shrink-0">
+              <div className="flex items-center space-x-2 min-w-0">
+                <span className="text-sm text-gray-700 truncate max-w-[120px] lg:max-w-[200px]">{user?.email}</span>
                 {getUserRoleBadge()}
               </div>
               <button
