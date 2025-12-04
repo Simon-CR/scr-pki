@@ -94,7 +94,9 @@ class Settings(BaseSettings):
     CA_VALIDITY_DAYS: int = 7300  # 20 years
     
     # Certificate Default Settings
-    CERT_DEFAULT_VALIDITY_DAYS: int = 3650  # 10 years
+    # Note: Apple/Safari requires TLS certs to be ≤398 days for full browser trust
+    # Longer durations are allowed but may show warnings in browsers
+    CERT_DEFAULT_VALIDITY_DAYS: int = 365  # 1 year (browser compliant default)
     CERT_DEFAULT_KEY_SIZE: int = 4096
     CERT_SIGNATURE_ALGORITHM: str = "SHA256"
     CERT_ALLOWED_KEY_SIZES: Union[str, List[int]] = [2048, 4096]

@@ -11,12 +11,23 @@ interface CertificateFilters {
   search: string
 }
 
-const MAX_VALIDITY_YEARS = 20
-const MAX_VALIDITY_DAYS = MAX_VALIDITY_YEARS * 365
 const DEFAULT_VALIDITY_DAYS = 365
 const CUSTOM_VALIDITY_VALUE = 'custom'
-const YEAR_OPTIONS = Array.from({ length: MAX_VALIDITY_YEARS }, (_, index) => index + 1)
 const DEFAULT_MONITORING_PORT = 443
+
+// Validity presets - Apple/Safari requires ≤398 days for full trust (since Sept 2020)
+// Longer durations will work but may show warnings in browsers
+const VALIDITY_PRESETS = [
+  { value: '90', label: '90 days', recommended: false },
+  { value: '180', label: '6 months', recommended: false },
+  { value: '365', label: '1 year ✓ Recommended', recommended: true },
+  { value: '398', label: '398 days (max browser-compliant)', recommended: false },
+  { value: '730', label: '2 years ⚠️', recommended: false },
+  { value: '1095', label: '3 years ⚠️', recommended: false },
+  { value: '1825', label: '5 years ⚠️', recommended: false },
+  { value: '3650', label: '10 years ⚠️', recommended: false },
+  { value: '7300', label: '20 years ⚠️', recommended: false },
+]
 
 type IssueFormState = {
   common_name: string
@@ -92,9 +103,9 @@ const getVaultUiUrl = () => {
   return `${window.location.origin}/ui/`
 }
 
-const getYearPresetFromDays = (days: number): string => {
-  const match = YEAR_OPTIONS.find(year => year * 365 === days)
-  return match ? String(match) : CUSTOM_VALIDITY_VALUE
+const getValidityPresetFromDays = (days: number): string => {
+  const match = VALIDITY_PRESETS.find(preset => preset.value === String(days))
+  return match ? match.value : CUSTOM_VALIDITY_VALUE
 }
 
 const Certificates: React.FC = () => {
@@ -108,7 +119,7 @@ const Certificates: React.FC = () => {
   
   const [issueForm, setIssueForm] = useState<IssueFormState>(() => createInitialIssueForm())
   const [issueError, setIssueError] = useState<string | null>(null)
-  const [validityPreset, setValidityPreset] = useState<string>(getYearPresetFromDays(DEFAULT_VALIDITY_DAYS))
+  const [validityPreset, setValidityPreset] = useState<string>(getValidityPresetFromDays(DEFAULT_VALIDITY_DAYS))
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null)
   const [monitoringForm, setMonitoringForm] = useState<MonitoringFormState>({
     monitoring_enabled: false,
@@ -266,7 +277,7 @@ const Certificates: React.FC = () => {
       toast.success('Certificate issued successfully')
       setShowIssueModal(false)
       setIssueForm(createInitialIssueForm())
-      setValidityPreset(getYearPresetFromDays(DEFAULT_VALIDITY_DAYS))
+      setValidityPreset(getValidityPresetFromDays(DEFAULT_VALIDITY_DAYS))
       monitoringAutoUrlRef.current = ''
       setIssueError(null)
     },
@@ -292,7 +303,7 @@ const Certificates: React.FC = () => {
     setShowIssueModal(false)
     setIssueError(null)
     setIssueForm(createInitialIssueForm())
-    setValidityPreset(getYearPresetFromDays(DEFAULT_VALIDITY_DAYS))
+    setValidityPreset(getValidityPresetFromDays(DEFAULT_VALIDITY_DAYS))
     monitoringAutoUrlRef.current = ''
   }
 
@@ -301,7 +312,7 @@ const Certificates: React.FC = () => {
     if (name === 'validity_days') {
       const parsedValue = parseInt(value, 10)
       const safeValue = Number.isNaN(parsedValue) ? 0 : parsedValue
-      setValidityPreset(getYearPresetFromDays(safeValue))
+      setValidityPreset(getValidityPresetFromDays(safeValue))
       setIssueForm(prev => ({
         ...prev,
         validity_days: safeValue
@@ -1050,14 +1061,16 @@ const Certificates: React.FC = () => {
                     value={issueForm.validity_days}
                     onChange={handleInputChange}
                     min={1}
-                    max={MAX_VALIDITY_DAYS}
+                    max={7300}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Supports up to {MAX_VALIDITY_YEARS} years ({MAX_VALIDITY_DAYS.toLocaleString()} days). Adjust for leap years if needed.</p>
+                  <p className="text-xs text-amber-600 mt-1">
+                    ⚠️ Apple/browsers only trust certs ≤398 days. Longer durations work but may show warnings.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Quick Select (years)
+                    Quick Select
                   </label>
                   <select
                     value={validityPreset}
@@ -1065,13 +1078,17 @@ const Certificates: React.FC = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value={CUSTOM_VALIDITY_VALUE}>Custom (enter days)</option>
-                    {YEAR_OPTIONS.map(year => (
-                      <option key={year} value={year.toString()}>
-                        {year} {year === 1 ? 'Year' : 'Years'} ({year * 365} days)
+                    {VALIDITY_PRESETS.map(preset => (
+                      <option 
+                        key={preset.value} 
+                        value={preset.value}
+                        className={preset.recommended ? 'font-semibold' : ''}
+                      >
+                        {preset.label}
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">Picking a year will auto-fill the days field.</p>
+                  <p className="text-xs text-gray-500 mt-1">Options with ⚠️ exceed browser compliance limits.</p>
                 </div>
               </div>
 

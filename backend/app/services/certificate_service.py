@@ -66,6 +66,16 @@ class CertificateService:
         if validity_days is None:
             validity_days = settings.CERT_DEFAULT_VALIDITY_DAYS
         
+        # Warn if validity exceeds browser compliance (Apple requires ≤398 days)
+        # But allow it - user may have internal-only use cases
+        if validity_days > 398:
+            logger.warning(
+                "Certificate validity exceeds browser compliance limit (398 days). "
+                "This certificate may show warnings in browsers.",
+                requested_days=validity_days,
+                common_name=common_name,
+            )
+        
         if subject_alt_names is None:
             subject_alt_names = []
         
