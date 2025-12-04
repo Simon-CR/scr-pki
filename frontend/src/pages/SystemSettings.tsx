@@ -1666,15 +1666,72 @@ const SystemSettings: React.FC = () => {
                               <div className="flex items-center">
                                 <input
                                   type="checkbox"
-                                  id="auth_type_api_key"
-                                  checked={(sealFormData.auth_type_api_key as boolean) || false}
-                                  onChange={(e) => updateSealFormField('auth_type_api_key', e.target.checked)}
+                                  id="auth_type_use_instance_principal"
+                                  checked={(sealFormData.auth_type_use_instance_principal as boolean) || false}
+                                  onChange={(e) => updateSealFormField('auth_type_use_instance_principal', e.target.checked)}
                                   className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                                 />
-                                <label htmlFor="auth_type_api_key" className="ml-2 block text-xs text-gray-600">
-                                  Use API Key Auth (instead of Instance Principal)
+                                <label htmlFor="auth_type_use_instance_principal" className="ml-2 block text-xs text-gray-600">
+                                  Use Instance Principal (instead of API Key)
                                 </label>
                               </div>
+                              
+                              {/* API Key Auth fields - shown when NOT using instance principal */}
+                              {!sealFormData.auth_type_use_instance_principal && (
+                                <div className="space-y-3 border-t pt-3 mt-3">
+                                  <p className="text-xs text-gray-500">API Key Authentication</p>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600">Tenancy OCID</label>
+                                    <input
+                                      type="text"
+                                      placeholder="ocid1.tenancy.oc1..xxxxx"
+                                      value={(sealFormData.auth_type_api_key_tenancy_ocid as string) || ''}
+                                      onChange={(e) => updateSealFormField('auth_type_api_key_tenancy_ocid', e.target.value)}
+                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600">User OCID</label>
+                                    <input
+                                      type="text"
+                                      placeholder="ocid1.user.oc1..xxxxx"
+                                      value={(sealFormData.auth_type_api_key_user_ocid as string) || ''}
+                                      onChange={(e) => updateSealFormField('auth_type_api_key_user_ocid', e.target.value)}
+                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600">Fingerprint</label>
+                                    <input
+                                      type="text"
+                                      placeholder="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+                                      value={(sealFormData.auth_type_api_key_fingerprint as string) || ''}
+                                      onChange={(e) => updateSealFormField('auth_type_api_key_fingerprint', e.target.value)}
+                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600">Region</label>
+                                    <input
+                                      type="text"
+                                      placeholder="us-ashburn-1"
+                                      value={(sealFormData.region as string) || ''}
+                                      onChange={(e) => updateSealFormField('region', e.target.value)}
+                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600">Private Key (PEM)</label>
+                                    <textarea
+                                      placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
+                                      value={(sealFormData.auth_type_api_key_private_key as string) || ''}
+                                      onChange={(e) => updateSealFormField('auth_type_api_key_private_key', e.target.value)}
+                                      rows={4}
+                                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm font-mono text-xs"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
 
