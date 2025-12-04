@@ -554,7 +554,9 @@ def get_auto_unseal_status(
     from app.core.security import decrypt_value
     
     # Check for vault_keys.json FIRST (local file takes priority when it exists)
+    # Primary path is the mounted volume /app/vault_data/
     vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
         Path("/app/data/vault/vault_keys.json"),
         Path("/app/data/vault_keys.json"),
         Path("data/vault/vault_keys.json"),
@@ -622,12 +624,22 @@ def auto_unseal_vault(
     import json
     from pathlib import Path
     
-    # Check for vault_keys.json
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.exists():
-        vault_keys_path = Path("data/vault_keys.json")
+    # Check for vault_keys.json in multiple paths
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
     
-    if vault_keys_path.exists():
+    vault_keys_path = None
+    for path in vault_keys_paths:
+        if path.exists():
+            vault_keys_path = path
+            break
+    
+    if vault_keys_path:
         try:
             with open(vault_keys_path, 'r') as f:
                 keys_data = json.load(f)
@@ -701,11 +713,22 @@ def get_vault_keys_file_status(
     import json
     from pathlib import Path
     
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.exists():
-        vault_keys_path = Path("data/vault_keys.json")
+    # Check multiple paths for vault_keys.json
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
     
-    if not vault_keys_path.exists():
+    vault_keys_path = None
+    for path in vault_keys_paths:
+        if path.exists():
+            vault_keys_path = path
+            break
+    
+    if not vault_keys_path:
         return VaultKeysFileStatusResponse(
             exists=False,
             key_count=0,
@@ -774,11 +797,10 @@ def create_vault_keys_file(
                 detail=f"Key {i+1} appears to be invalid or too short"
             )
     
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.parent.exists():
-        vault_keys_path = Path("data/vault_keys.json")
+    # Use mounted volume path for persistence
+    vault_keys_path = Path("/app/vault_data/vault_keys.json")
     
-    # Ensure data directory exists
+    # Ensure directory exists
     vault_keys_path.parent.mkdir(parents=True, exist_ok=True)
     
     keys_data = {
@@ -818,26 +840,32 @@ def delete_vault_keys_file(
     """
     from pathlib import Path
     
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.exists():
-        vault_keys_path = Path("data/vault_keys.json")
+    # Check multiple paths
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
     
-    if not vault_keys_path.exists():
+    deleted = False
+    for vault_keys_path in vault_keys_paths:
+        if vault_keys_path.exists():
+            try:
+                vault_keys_path.unlink()
+                logger.info("Deleted vault_keys.json", path=str(vault_keys_path))
+                deleted = True
+            except Exception as e:
+                logger.error("Failed to delete vault_keys.json", path=str(vault_keys_path), error=str(e))
+    
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="vault_keys.json does not exist"
         )
     
-    try:
-        vault_keys_path.unlink()
-        logger.info("Deleted vault_keys.json")
-        return {"message": "vault_keys.json deleted. Local auto-unseal is now disabled."}
-    except Exception as e:
-        logger.error("Failed to delete vault_keys.json", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete vault_keys.json: {str(e)}"
-        )
+    return {"message": "vault_keys.json deleted. Local auto-unseal is now disabled."}
 
 
 # =============================================================================

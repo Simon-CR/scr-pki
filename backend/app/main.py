@@ -160,12 +160,23 @@ async def try_auto_unseal_vault():
         logger.warning(f"Could not check Vault seal status: {e}")
         return
     
-    # Look for vault_keys.json
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.exists():
-        vault_keys_path = Path("data/vault_keys.json")
+    # Look for vault_keys.json in multiple paths
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
     
-    if not vault_keys_path.exists():
+    vault_keys_path = None
+    for path in vault_keys_paths:
+        if path.exists():
+            vault_keys_path = path
+            logger.info(f"Found vault_keys.json at {path}")
+            break
+    
+    if not vault_keys_path:
         logger.info("No vault_keys.json found - manual unseal required")
         return
     

@@ -95,6 +95,7 @@ services:
     volumes:
       - ./data/certs:/app/certs
       - ./data/logs/backend:/app/logs
+      - ./data/vault:/app/vault_data
       - ./backups:/app/backups
       - ssl_data:/etc/nginx/ssl
       - /var/run/docker.sock:/var/run/docker.sock
