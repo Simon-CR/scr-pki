@@ -1431,12 +1431,12 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
                 if not region: missing.append("region")
                 return {"success": False, "error": f"Missing OCI config fields: {', '.join(missing)}"}
             
+            # Build config - don't include key_file as we use private_key_content in signer
             config = {
                 "user": user,
                 "fingerprint": fingerprint,
                 "tenancy": tenancy,
-                "region": region,
-                "key_file": None  # We'll use key_content
+                "region": region
             }
             
             private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
@@ -1454,8 +1454,6 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
                 private_key_content=private_key,
                 private_key_file_location=None
             )
-            
-            secrets_client = oci.vault.VaultsClient(config=config, signer=signer)
         
         # For OCI, we store the encrypted data in a secret
         # First, get vault info to find the management endpoint
@@ -1464,13 +1462,15 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
             vault_endpoint = vault_endpoint.replace('/20180608', '')
         
         # Create secrets client with vault endpoint
+        # Use empty config when we have a custom signer - OCI SDK validates config fields
         if use_instance_principal:
             secrets_client = oci.secrets.SecretsClient(config={}, signer=signer)
             vaults_client = oci.vault.VaultsClient(config={}, signer=signer)
         else:
-            config["region"] = kms_config.get('region')
-            secrets_client = oci.secrets.SecretsClient(config=config, signer=signer)
-            vaults_client = oci.vault.VaultsClient(config=config, signer=signer)
+            # Only pass region in config - other auth is in signer
+            minimal_config = {"region": region}
+            secrets_client = oci.secrets.SecretsClient(config=minimal_config, signer=signer)
+            vaults_client = oci.vault.VaultsClient(config=minimal_config, signer=signer)
         
         # Encode the secret data as base64 (OCI requires this)
         encoded_data = base64.b64encode(secret_data.encode()).decode()
@@ -1491,8 +1491,10 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
                 service_endpoint=crypto_endpoint
             )
         else:
+            # Use minimal config with just region - auth is in signer
+            minimal_config = {"region": kms_config.get('region')}
             crypto_client = oci.key_management.KmsCryptoClient(
-                config=config, 
+                config=minimal_config, 
                 signer=signer,
                 service_endpoint=crypto_endpoint
             )
