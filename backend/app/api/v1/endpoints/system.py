@@ -1686,7 +1686,15 @@ def get_key_replication_status(
         
         if config:
             try:
-                provider_config = json.loads(config.value)
+                # Decrypt config first, then parse JSON
+                from app.core.security import decrypt_value
+                try:
+                    decrypted_config = decrypt_value(config.value)
+                    provider_config = json.loads(decrypted_config)
+                except Exception:
+                    # Maybe not encrypted, try direct parse
+                    provider_config = json.loads(config.value)
+                
                 if provider_config.get('enabled'):
                     # Check for replication record
                     replication_record = db.query(SystemConfig).filter(
@@ -2448,8 +2456,6 @@ def test_seal_config(
         # Test OCI KMS connectivity
         try:
             import oci
-            import logging
-            logger = logging.getLogger(__name__)
             
             # Debug: log received config keys
             logger.info(f"OCI KMS test - received config keys: {list(config.keys())}")
