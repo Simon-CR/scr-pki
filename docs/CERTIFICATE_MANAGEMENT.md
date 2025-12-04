@@ -310,29 +310,29 @@ http:
    - Subject Alternative Names: Add the IP address (e.g., `192.168.1.50`)
    - Click **Issue**
 
-2. **Download Files**:
-   - Click **Download Bundle** (ensure "Include Private Key" is checked)
-   - This gives you a single `.pem` file containing the Key, Certificate, and Chain.
+2. **Download Files** (Proxmox requires separate files):
+   - Click **Download Key** to get the private key file (`.key`)
+   - Click **Download Chain** to get the certificate with CA chain (`.pem`)
+   
+   > **Note**: Do not use "Full Bundle" for Proxmox - it combines the key and certificate into one file, which Proxmox does not accept.
 
 3. **Install via Web Interface**:
-   - Open the `.pem` file in a text editor.
-   - Copy the **Private Key** section (including `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----`) into a new file named `proxmox.key`.
-   - Copy the **Certificate** and **Chain** sections into a new file named `proxmox.crt`.
-   - Go to Proxmox **Datacenter** → **Node** → **System** → **Certificates**.
-   - Click **Upload Custom Certificate**.
-   - Upload `proxmox.key` and `proxmox.crt`.
+   - Go to Proxmox **Datacenter** → **Node** → **System** → **Certificates**
+   - Click **Upload Custom Certificate**
+   - Upload the `.key` file as the Private Key
+   - Upload the `.pem` file as the Certificate
 
 4. **Or via CLI**:
-   - Upload the bundle to your Proxmox server.
-   - Split the bundle or copy the content to the correct locations:
+   - Upload both files to your Proxmox server
    ```bash
-   # Assuming you uploaded the bundle as 'bundle.pem'
+   # Copy the key file
+   cp proxmox.key /etc/pve/local/pveproxy-ssl.key
    
-   # Extract Private Key
-   openssl pkey -in bundle.pem -out /etc/pve/local/pveproxy-ssl.key
+   # Copy the certificate chain
+   cp proxmox.pem /etc/pve/local/pveproxy-ssl.pem
    
-   # Extract Certificate and Chain
-   openssl crl2pkcs7 -nocrl -certfile bundle.pem | openssl pkcs7 -print_certs -out /etc/pve/local/pveproxy-ssl.pem
+   # Set permissions
+   chmod 600 /etc/pve/local/pveproxy-ssl.key
    
    # Restart proxy
    systemctl restart pveproxy
