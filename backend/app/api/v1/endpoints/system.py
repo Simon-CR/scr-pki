@@ -1410,14 +1410,27 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
         # Handle both old field names and new auth_type_ prefixed field names
         key_id = kms_config.get('key_id') or kms_config.get('key_ocid')
         use_instance_principal = kms_config.get('auth_type_use_instance_principal') or kms_config.get('use_instance_principal', False)
+        crypto_endpoint = kms_config.get('crypto_endpoint')
         
         if not key_id:
             return {"success": False, "error": "Key ID (key_id or key_ocid) not configured"}
         
+        if not crypto_endpoint:
+            return {"success": False, "error": "Crypto endpoint not configured"}
+        
+        # Encode the secret data as base64 (OCI requires this)
+        encoded_data = base64.b64encode(secret_data.encode()).decode()
+        
         if use_instance_principal:
+            # Instance Principal auth - use empty config with signer
             signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            crypto_client = oci.key_management.KmsCryptoClient(
+                config={}, 
+                signer=signer,
+                service_endpoint=crypto_endpoint
+            )
         else:
-            # Build config from stored values - try both old and new field names
+            # API Key authentication - use key_content in config (same pattern as seal test)
             tenancy = kms_config.get('auth_type_api_key_tenancy_ocid') or kms_config.get('tenancy_ocid')
             user = kms_config.get('auth_type_api_key_user_ocid') or kms_config.get('user_ocid')
             fingerprint = kms_config.get('auth_type_api_key_fingerprint') or kms_config.get('fingerprint')
@@ -1431,14 +1444,6 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
                 if not region: missing.append("region")
                 return {"success": False, "error": f"Missing OCI config fields: {', '.join(missing)}"}
             
-            # Build config - don't include key_file as we use private_key_content in signer
-            config = {
-                "user": user,
-                "fingerprint": fingerprint,
-                "tenancy": tenancy,
-                "region": region
-            }
-            
             private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
             if private_key:
                 # Try to decrypt - if it fails, assume it's already plaintext
@@ -1447,41 +1452,22 @@ def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db
                 except Exception:
                     pass  # Already decrypted or plaintext
             
-            signer = oci.signer.Signer(
-                tenancy=config["tenancy"],
-                user=config["user"],
-                fingerprint=config["fingerprint"],
-                private_key_content=private_key,
-                private_key_file_location=None
+            if not private_key:
+                return {"success": False, "error": "Private key is required for API key authentication"}
+            
+            # Build OCI config with key_content (same pattern as the working seal test)
+            oci_config = {
+                "user": user,
+                "fingerprint": fingerprint,
+                "tenancy": tenancy,
+                "region": region,
+                "key_content": private_key
+            }
+            
+            crypto_client = oci.key_management.KmsCryptoClient(
+                oci_config, 
+                service_endpoint=crypto_endpoint
             )
-        
-        # For OCI, we store the encrypted data in a secret
-        # First, get vault info to find the management endpoint
-        vault_endpoint = kms_config.get('crypto_endpoint', '').replace('/crypto', '')
-        if vault_endpoint.endswith('/20180608'):
-            vault_endpoint = vault_endpoint.replace('/20180608', '')
-        
-        # OCI SDK validates config dict fields even with custom signer
-        # Use empty config - signer handles auth, service_endpoint handles region
-        
-        # Encode the secret data as base64 (OCI requires this)
-        encoded_data = base64.b64encode(secret_data.encode()).decode()
-        
-        # Try to create secret in vault
-        # Note: OCI Vault secrets are more complex - we need to use the Vault management API
-        # For simplicity, we'll use the KMS to encrypt the data and store it locally marked as "replicated"
-        
-        # Get crypto endpoint
-        crypto_endpoint = kms_config.get('crypto_endpoint')
-        if not crypto_endpoint:
-            return {"success": False, "error": "Crypto endpoint not configured"}
-        
-        # Use empty config dict - auth is handled by signer, region is in endpoint URL
-        crypto_client = oci.key_management.KmsCryptoClient(
-            config={}, 
-            signer=signer,
-            service_endpoint=crypto_endpoint
-        )
         
         # Encrypt the data with the key
         encrypt_response = crypto_client.encrypt(
