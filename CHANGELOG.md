@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2025-12-04
+
+### Changed
+- **Docker Compose Consolidation**: Simplified from 3 compose files to 2:
+  - `docker-compose.yml` - Production config (pulls from Docker Hub)
+  - `docker-compose.dev.yml` - Development override (builds locally with hot reload)
+  - Removed `docker-compose.prod.yml` (merged into main `docker-compose.yml`)
+
+### Fixed
+- **Dashboard Last Check Field**: Fixed "Last check" timestamp not displaying in Operational Telemetry card (was using wrong field name `last_check_at` instead of `last_verified_at`)
+- **Dashboard Status Logic**: Fixed monitoring status checks to match actual API response format (`up`/`down`/`pending` instead of `ACTIVE`/`SUCCESS`)
+- **Dashboard Active Services Count**: Fixed "Active services" KPI card showing incorrect count (was checking for `active`/`success` instead of `up` and actual result string)
+- **Dashboard Syntax Error**: Removed duplicate closing `</span>` tag that caused rendering issues
+
 ## [0.2.8] - 2025-12-04
 
 ### Fixed

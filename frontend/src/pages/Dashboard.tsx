@@ -88,7 +88,7 @@ const Dashboard: React.FC = () => {
 
     if (services && Array.isArray(services)) {
       const activeServices = services.filter(service => 
-        service.status === 'active' && service.last_check_result === 'success'
+        service.status === 'up' && service.last_check_result?.includes('presents the assigned certificate')
       )
       setStats(prev => ({
         ...prev,
@@ -118,7 +118,7 @@ const Dashboard: React.FC = () => {
 
   const activeAlerts = (alerts ?? []).filter(alert => alert.status === 'active')
   const healthyServices = (services ?? []).filter(
-    service => service.status?.toUpperCase() === 'ACTIVE' && service.last_check_result?.toUpperCase() === 'SUCCESS'
+    service => service.status === 'up' && service.last_check_result?.includes('presents the assigned certificate')
   )
   const totalServices = services?.length ?? 0
   const serviceUptime = totalServices ? Math.round((healthyServices.length / totalServices) * 100) : 100
@@ -393,12 +393,12 @@ const Dashboard: React.FC = () => {
                     <div>
                       <p className="text-sm font-medium text-white">{service.name}</p>
                       <p className="text-xs text-slate-500">
-                        Last check {service.last_check_at ? new Date(service.last_check_at).toLocaleString() : '—'}
+                        Last check {service.last_verified_at ? new Date(service.last_verified_at).toLocaleString() : '—'}
                       </p>
                     </div>
                     <span
                       className={`text-xs px-3 py-1 rounded-full ${
-                        service.status?.toUpperCase() === 'ACTIVE' && service.last_check_result?.toUpperCase() === 'SUCCESS'
+                        service.status === 'up' && service.last_check_result?.includes('presents the assigned certificate')
                           ? 'bg-emerald-500/20 text-emerald-200'
                           : 'bg-rose-500/20 text-rose-200'
                       }`}

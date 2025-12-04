@@ -90,7 +90,7 @@ SCR-PKI containers run with `apparmor:unconfined` in the Docker configuration. T
 **For Enhanced Security (Production/Enterprise):**
 
 If your host has AppArmor enabled and you want additional container isolation:
-1. Remove `security_opt: - apparmor:unconfined` from `docker-compose.prod.yml`
+1. Remove `security_opt: - apparmor:unconfined` from `docker-compose.yml`
 2. Use default Docker AppArmor profiles, or
 3. Create custom profiles for each service
 

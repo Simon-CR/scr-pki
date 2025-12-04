@@ -64,7 +64,7 @@ With documentation noting:
 ---
 
 ### 3. Vault TLS disabled in production
-**Location:** `docker-compose.prod.yml:143`
+**Location:** `docker-compose.yml:143`
 
 **Original Finding:** Vault communicates without TLS, meaning tokens and secrets are transmitted in plaintext on the internal Docker network.
 
@@ -421,7 +421,7 @@ The `request_id` allows correlating user-reported issues with server logs.
 ---
 
 ### 10. `ALLOWED_HOSTS=["*"]` in production
-**Location:** `docker-compose.prod.yml:57`
+**Location:** `docker-compose.yml:57`
 
 **Original Finding:** Accepts requests from any host header, enabling host header injection attacks.
 
@@ -430,13 +430,13 @@ The `request_id` allows correlating user-reported issues with server logs.
 **Recommendation:** Set explicit allowed hosts based on your deployment:
 
 ```yaml
-# docker-compose.prod.yml
+# docker-compose.yml
 environment:
   - ALLOWED_HOSTS=["pki.yourdomain.com", "localhost", "127.0.0.1"]
 ```
 
 **Options:**
-- **Option A:** Hardcode your domain(s) in docker-compose.prod.yml
+- **Option A:** Hardcode your domain(s) in docker-compose.yml
 - **Option B:** Use environment variable interpolation: `ALLOWED_HOSTS=${ALLOWED_HOSTS:-["localhost"]}`
 - **Option C:** Document that users must change this before production deployment
 
@@ -698,7 +698,7 @@ networks:
 ---
 
 ### 19. AppArmor disabled on all containers
-**Location:** `docker-compose.prod.yml`
+**Location:** `docker-compose.yml`
 
 **Issue:** `apparmor:unconfined` removes additional security layer.
 

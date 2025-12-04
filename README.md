@@ -73,10 +73,10 @@ SCR-PKI provides a complete solution for managing SSL/TLS certificates in your h
 
 ### Development
 
-To run in development mode (with hot-reloading and exposed ports):
+To run in development mode (with hot-reloading, local builds, and exposed ports):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 ```
 
 ## 📚 Documentation
