@@ -1265,6 +1265,7 @@ def _store_in_aws_secrets_manager(kms_config: dict, secret_name: str, secret_dat
     """Store keys in AWS Secrets Manager (not KMS directly)"""
     try:
         import boto3
+        import json
         from app.core.security import decrypt_value
         
         region = kms_config.get('region', 'us-east-1')
@@ -1301,7 +1302,7 @@ def _store_in_aws_secrets_manager(kms_config: dict, secret_name: str, secret_dat
                 SecretId=secret_name,
                 SecretString=secret_data
             )
-            return {"success": True, "identifier": response['ARN']}
+            identifier = response['ARN']
         except client.exceptions.ResourceNotFoundException:
             # Secret doesn't exist, create it
             response = client.create_secret(
@@ -1309,7 +1310,32 @@ def _store_in_aws_secrets_manager(kms_config: dict, secret_name: str, secret_dat
                 SecretString=secret_data,
                 Description="Vault unseal keys (replicated for redundancy)"
             )
-            return {"success": True, "identifier": response['ARN']}
+            identifier = response['ARN']
+        
+        # Store replication record in database for status tracking
+        replication_record = db.query(SystemConfig).filter(
+            SystemConfig.key == "replicated_keys_awskms"
+        ).first()
+        
+        replicated_data = {
+            "identifier": identifier,
+            "region": region,
+            "secret_name": secret_name,
+            "replicated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if replication_record:
+            replication_record.value = json.dumps(replicated_data)
+        else:
+            replication_record = SystemConfig(
+                key="replicated_keys_awskms",
+                value=json.dumps(replicated_data)
+            )
+            db.add(replication_record)
+        
+        db.commit()
+        
+        return {"success": True, "identifier": identifier}
     
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1353,7 +1379,7 @@ def _store_in_gcp_secret_manager(kms_config: dict, secret_name: str, secret_data
                     "payload": {"data": secret_data.encode("UTF-8")}
                 }
             )
-            return {"success": True, "identifier": response.name}
+            identifier = response.name
         except Exception:
             # Secret doesn't exist, create it
             secret = client.create_secret(
@@ -1369,7 +1395,32 @@ def _store_in_gcp_secret_manager(kms_config: dict, secret_name: str, secret_data
                     "payload": {"data": secret_data.encode("UTF-8")}
                 }
             )
-            return {"success": True, "identifier": response.name}
+            identifier = response.name
+        
+        # Store replication record in database for status tracking
+        replication_record = db.query(SystemConfig).filter(
+            SystemConfig.key == "replicated_keys_gcpckms"
+        ).first()
+        
+        replicated_data = {
+            "identifier": identifier,
+            "project": project,
+            "secret_name": secret_name,
+            "replicated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if replication_record:
+            replication_record.value = json.dumps(replicated_data)
+        else:
+            replication_record = SystemConfig(
+                key="replicated_keys_gcpckms",
+                value=json.dumps(replicated_data)
+            )
+            db.add(replication_record)
+        
+        db.commit()
+        
+        return {"success": True, "identifier": identifier}
     
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1381,6 +1432,7 @@ def _store_in_azure_keyvault(kms_config: dict, secret_name: str, secret_data: st
         from azure.identity import ClientSecretCredential
         from azure.keyvault.secrets import SecretClient
         from app.core.security import decrypt_value
+        import json
         
         vault_name = kms_config.get('vault_name')
         tenant_id = kms_config.get('tenant_id')
@@ -1408,7 +1460,32 @@ def _store_in_azure_keyvault(kms_config: dict, secret_name: str, secret_data: st
         safe_name = secret_name.replace("_", "-")
         
         secret = client.set_secret(safe_name, secret_data)
-        return {"success": True, "identifier": secret.id}
+        identifier = secret.id
+        
+        # Store replication record in database for status tracking
+        replication_record = db.query(SystemConfig).filter(
+            SystemConfig.key == "replicated_keys_azurekeyvault"
+        ).first()
+        
+        replicated_data = {
+            "identifier": identifier,
+            "vault_name": vault_name,
+            "secret_name": safe_name,
+            "replicated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if replication_record:
+            replication_record.value = json.dumps(replicated_data)
+        else:
+            replication_record = SystemConfig(
+                key="replicated_keys_azurekeyvault",
+                value=json.dumps(replicated_data)
+            )
+            db.add(replication_record)
+        
+        db.commit()
+        
+        return {"success": True, "identifier": identifier}
     
     except Exception as e:
         return {"success": False, "error": str(e)}
