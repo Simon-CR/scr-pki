@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus, KeyReplicationStatusResponse } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings, ArrowRight } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -65,6 +65,13 @@ const SystemSettings: React.FC = () => {
   const [unsealMethods, setUnsealMethods] = useState<UnsealMethodStatus[]>([])
   const [activeUnsealMethod, setActiveUnsealMethod] = useState<string | null>(null)
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
+  
+  // Key Replication State
+  const [replicationSource, setReplicationSource] = useState<'local_file' | 'manual'>('local_file')
+  const [replicationDestination, setReplicationDestination] = useState<string>('')
+  const [replicationKeys, setReplicationKeys] = useState<string[]>(['', '', ''])
+  const [replicationLoading, setReplicationLoading] = useState(false)
+  const [replicationStatus, setReplicationStatus] = useState<{ has_local_keys: boolean; local_key_count: number; replications: Array<{ destination: string; replicated_at?: string; status: string }> } | null>(null)
   
   // Quick Import State for KMS configs
   const [ociConfigImport, setOciConfigImport] = useState('')
@@ -437,6 +444,52 @@ const SystemSettings: React.FC = () => {
     }
   }
 
+  // Key Replication Functions
+  const loadReplicationStatus = async () => {
+    try {
+      const status = await systemService.getReplicationStatus()
+      setReplicationStatus(status)
+    } catch (error) {
+      console.error('Failed to load replication status', error)
+    }
+  }
+
+  const handleReplicateKeys = async () => {
+    if (!replicationDestination) {
+      toast.error('Please select a destination')
+      return
+    }
+
+    // If manual source, validate keys
+    if (replicationSource === 'manual') {
+      const validKeys = replicationKeys.filter(k => k.trim() !== '')
+      if (validKeys.length === 0) {
+        toast.error('Please enter at least one unseal key')
+        return
+      }
+    }
+
+    setReplicationLoading(true)
+    try {
+      const response = await systemService.replicateKeys({
+        source: replicationSource,
+        source_keys: replicationSource === 'manual' ? replicationKeys.filter(k => k.trim() !== '') : undefined,
+        destination: replicationDestination
+      })
+
+      if (response.success) {
+        toast.success(response.message)
+        await loadReplicationStatus()
+      } else {
+        toast.error(response.message)
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to replicate keys')
+    } finally {
+      setReplicationLoading(false)
+    }
+  }
+
   // Seal Configuration Functions
   const loadSealConfig = async () => {
     try {
@@ -446,9 +499,10 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
-      // Also load keys file status and priority when loading seal config
+      // Also load keys file status, priority, and replication when loading seal config
       loadKeysFileStatus()
       loadUnsealPriority()
+      loadReplicationStatus()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
@@ -2153,6 +2207,187 @@ const SystemSettings: React.FC = () => {
                           )}
                             </div>
                           )}
+
+                          {/* Key Replication Section */}
+                          <div className="border-t pt-4">
+                            <div className="flex items-center mb-3">
+                              <Archive className="h-5 w-5 text-purple-500 mr-2" />
+                              <h4 className="text-sm font-medium text-gray-900">Key Replication (Backup)</h4>
+                            </div>
+                            <p className="text-xs text-gray-500 mb-4">
+                              Replicate your Vault unseal keys to a configured KMS provider for redundancy and disaster recovery.
+                            </p>
+
+                            {/* Replication Status */}
+                            {replicationStatus && (
+                              <div className="mb-4 p-3 bg-gray-50 rounded-md">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-sm font-medium text-gray-700">Current Status</span>
+                                  <button
+                                    type="button"
+                                    onClick={loadReplicationStatus}
+                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                  >
+                                    <RefreshCw className="h-3 w-3 inline mr-1" />
+                                    Refresh
+                                  </button>
+                                </div>
+                                <div className="space-y-1 text-xs">
+                                  <p>
+                                    <span className={replicationStatus.has_local_keys ? 'text-green-600' : 'text-yellow-600'}>
+                                      {replicationStatus.has_local_keys 
+                                        ? `✅ Local keys: ${replicationStatus.local_key_count} keys available` 
+                                        : '⚠️ No local keys file found'}
+                                    </span>
+                                  </p>
+                                  {replicationStatus.replications.length > 0 ? (
+                                    <div className="mt-2">
+                                      <p className="font-medium text-gray-600 mb-1">Replicated to:</p>
+                                      {replicationStatus.replications.map((r, idx) => (
+                                        <p key={idx} className="flex items-center text-gray-600">
+                                          {r.status === 'replicated' ? (
+                                            <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
+                                          ) : (
+                                            <AlertTriangle className="h-3 w-3 text-yellow-500 mr-1" />
+                                          )}
+                                          <span className="font-medium">{r.destination.toUpperCase()}</span>
+                                          {r.replicated_at && (
+                                            <span className="ml-2 text-gray-400">
+                                              {new Date(r.replicated_at).toLocaleDateString()}
+                                            </span>
+                                          )}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-gray-500 mt-1">No replications configured yet</p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Replication Form */}
+                            <div className="space-y-4">
+                              {/* Source Selection */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Source</label>
+                                <div className="flex space-x-4">
+                                  <label className="inline-flex items-center">
+                                    <input
+                                      type="radio"
+                                      name="replicationSource"
+                                      value="local_file"
+                                      checked={replicationSource === 'local_file'}
+                                      onChange={(e) => setReplicationSource(e.target.value as 'local_file' | 'manual')}
+                                      className="form-radio h-4 w-4 text-indigo-600"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">
+                                      Local Keys File
+                                      {replicationStatus?.has_local_keys && (
+                                        <span className="ml-1 text-green-600">
+                                          ({replicationStatus.local_key_count} keys)
+                                        </span>
+                                      )}
+                                    </span>
+                                  </label>
+                                  <label className="inline-flex items-center">
+                                    <input
+                                      type="radio"
+                                      name="replicationSource"
+                                      value="manual"
+                                      checked={replicationSource === 'manual'}
+                                      onChange={(e) => setReplicationSource(e.target.value as 'local_file' | 'manual')}
+                                      className="form-radio h-4 w-4 text-indigo-600"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">Enter Keys Manually</span>
+                                  </label>
+                                </div>
+                              </div>
+
+                              {/* Manual Keys Input */}
+                              {replicationSource === 'manual' && (
+                                <div className="space-y-2">
+                                  <label className="block text-sm font-medium text-gray-700">Unseal Keys</label>
+                                  {replicationKeys.map((key, idx) => (
+                                    <input
+                                      key={idx}
+                                      type="password"
+                                      value={key}
+                                      onChange={(e) => {
+                                        const newKeys = [...replicationKeys]
+                                        newKeys[idx] = e.target.value
+                                        setReplicationKeys(newKeys)
+                                      }}
+                                      placeholder={`Unseal Key ${idx + 1}`}
+                                      className="w-full px-3 py-2 text-sm border rounded-md font-mono"
+                                    />
+                                  ))}
+                                  <button
+                                    type="button"
+                                    onClick={() => setReplicationKeys([...replicationKeys, ''])}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                  >
+                                    + Add another key
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Destination Selection */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Destination</label>
+                                <select
+                                  value={replicationDestination}
+                                  onChange={(e) => setReplicationDestination(e.target.value)}
+                                  className="w-full px-3 py-2 border rounded-md text-sm"
+                                >
+                                  <option value="">Select a destination...</option>
+                                  {unsealMethods
+                                    .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
+                                    .map(m => (
+                                      <option key={m.method} value={m.method}>
+                                        {m.method === 'awskms' ? 'AWS Secrets Manager' :
+                                         m.method === 'gcpckms' ? 'GCP Secret Manager' :
+                                         m.method === 'azurekeyvault' ? 'Azure Key Vault' :
+                                         m.method === 'ocikms' ? 'OCI Vault' :
+                                         m.method === 'alicloudkms' ? 'AliCloud KMS' :
+                                         m.method === 'transit' ? 'Vault Transit' :
+                                         m.method.toUpperCase()}
+                                      </option>
+                                    ))}
+                                </select>
+                                {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').length === 0 && (
+                                  <p className="mt-1 text-xs text-yellow-600">
+                                    ⚠️ No KMS providers configured. Configure a provider above first.
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* Replicate Button */}
+                              <div className="flex items-center space-x-3">
+                                <button
+                                  type="button"
+                                  onClick={handleReplicateKeys}
+                                  disabled={replicationLoading || !replicationDestination || (replicationSource === 'local_file' && !replicationStatus?.has_local_keys)}
+                                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {replicationLoading ? (
+                                    <>
+                                      <RefreshCw className="animate-spin h-4 w-4 mr-2" />
+                                      Replicating...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ArrowRight className="h-4 w-4 mr-2" />
+                                      Replicate Keys
+                                    </>
+                                  )}
+                                </button>
+                                <span className="text-xs text-gray-500">
+                                  Keys will be encrypted at rest in the destination
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2163,7 +2398,7 @@ const SystemSettings: React.FC = () => {
               <div className="flex justify-center">
                 <LoadingSpinner />
               </div>
-            )}
+            )}}
           </div>
         </div>
         )}

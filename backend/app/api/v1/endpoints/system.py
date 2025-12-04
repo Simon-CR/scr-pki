@@ -1018,6 +1018,15 @@ def get_unseal_priority(
         if enabled and active_method is None:
             active_method = provider
     
+    # Add Shamir (manual unseal) as always-available fallback
+    methods.append(UnsealMethodStatus(
+        method="shamir",
+        configured=True,  # Always available
+        enabled=True,     # Always enabled as fallback
+        priority=998,     # Near the end
+        details="Manual Unseal - Use 3 of 5 Shamir keys"
+    ))
+    
     # Sort by priority
     methods.sort(key=lambda m: m.priority)
     
@@ -1040,7 +1049,7 @@ def update_unseal_priority(
     """
     import json
     
-    valid_methods = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+    valid_methods = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "shamir"]
     
     # Validate all methods are valid
     for method in request.priority:
@@ -1061,6 +1070,635 @@ def update_unseal_priority(
     db.commit()
     
     return {"message": "Unseal priority updated", "priority": request.priority}
+
+
+# =============================================================================
+# Key Replication (Copy Unseal Keys to KMS Provider for Redundancy)
+# =============================================================================
+
+class KeyReplicationSource(str, Enum):
+    LOCAL_FILE = "local_file"  # vault_keys.json
+    MANUAL = "manual"  # User provides keys directly
+    SHAMIR = "shamir"  # Same as manual, user provides Shamir keys
+
+
+class KeyReplicationRequest(BaseModel):
+    """Request to replicate unseal keys to a KMS provider"""
+    source: KeyReplicationSource
+    source_keys: Optional[List[str]] = None  # Required if source is manual/shamir
+    destination: str  # awskms, gcpckms, azurekeyvault, ocikms, alicloudkms, transit
+    secret_name: Optional[str] = "vault-unseal-keys"  # Name/path for the stored secret
+
+
+class KeyReplicationResponse(BaseModel):
+    """Response from key replication"""
+    success: bool
+    message: str
+    keys_replicated: int = 0
+    destination: str
+    secret_identifier: Optional[str] = None  # ARN, key path, etc.
+
+
+@router.post("/config/vault/replicate-keys", response_model=KeyReplicationResponse)
+def replicate_unseal_keys(
+    request: KeyReplicationRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Replicate Vault unseal keys to a KMS provider for redundancy.
+    
+    This allows you to:
+    1. Backup your Shamir keys to cloud KMS (encrypted at rest)
+    2. Create redundancy across multiple KMS providers
+    3. Enable disaster recovery scenarios
+    
+    The keys are stored encrypted using the destination provider's encryption.
+    """
+    import json
+    from pathlib import Path
+    from app.core.security import decrypt_value
+    
+    logger.info("Key replication requested", 
+                source=request.source, 
+                destination=request.destination)
+    
+    # Step 1: Get the source keys
+    unseal_keys = []
+    
+    if request.source == KeyReplicationSource.LOCAL_FILE:
+        # Read from vault_keys.json
+        vault_keys_paths = [
+            Path("/app/vault_data/vault_keys.json"),
+            Path("/app/data/vault/vault_keys.json"),
+            Path("/app/data/vault_keys.json"),
+            Path("data/vault/vault_keys.json"),
+        ]
+        
+        for path in vault_keys_paths:
+            if path.exists():
+                try:
+                    with open(path, 'r') as f:
+                        keys_data = json.load(f)
+                    unseal_keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                    if unseal_keys:
+                        logger.info(f"Found {len(unseal_keys)} keys in {path}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to read {path}: {e}")
+        
+        if not unseal_keys:
+            return KeyReplicationResponse(
+                success=False,
+                message="No vault_keys.json found or it contains no keys",
+                destination=request.destination
+            )
+    
+    elif request.source in [KeyReplicationSource.MANUAL, KeyReplicationSource.SHAMIR]:
+        if not request.source_keys or len(request.source_keys) == 0:
+            return KeyReplicationResponse(
+                success=False,
+                message="No source keys provided. Please provide the Shamir unseal keys.",
+                destination=request.destination
+            )
+        unseal_keys = request.source_keys
+    
+    else:
+        return KeyReplicationResponse(
+            success=False,
+            message=f"Unknown source: {request.source}",
+            destination=request.destination
+        )
+    
+    # Step 2: Get the destination KMS configuration
+    config_key = f"seal_{request.destination}"
+    config = db.query(SystemConfig).filter(SystemConfig.key == config_key).first()
+    
+    if not config:
+        return KeyReplicationResponse(
+            success=False,
+            message=f"Destination {request.destination} is not configured. Configure it first in System Settings.",
+            destination=request.destination
+        )
+    
+    try:
+        kms_config = json.loads(config.value)
+    except:
+        return KeyReplicationResponse(
+            success=False,
+            message=f"Invalid configuration for {request.destination}",
+            destination=request.destination
+        )
+    
+    if not kms_config.get('enabled'):
+        return KeyReplicationResponse(
+            success=False,
+            message=f"{request.destination} is configured but not enabled",
+            destination=request.destination
+        )
+    
+    # Step 3: Store the keys in the destination KMS
+    secret_name = request.secret_name or "vault-unseal-keys"
+    secret_data = json.dumps({
+        "unseal_keys": unseal_keys,
+        "replicated_at": datetime.now(timezone.utc).isoformat(),
+        "source": request.source.value,
+        "key_count": len(unseal_keys)
+    })
+    
+    try:
+        if request.destination == "awskms":
+            result = _store_in_aws_secrets_manager(kms_config, secret_name, secret_data, db)
+        elif request.destination == "gcpckms":
+            result = _store_in_gcp_secret_manager(kms_config, secret_name, secret_data, db)
+        elif request.destination == "azurekeyvault":
+            result = _store_in_azure_keyvault(kms_config, secret_name, secret_data, db)
+        elif request.destination == "ocikms":
+            result = _store_in_oci_vault(kms_config, secret_name, secret_data, db)
+        elif request.destination == "alicloudkms":
+            result = _store_in_alicloud_kms(kms_config, secret_name, secret_data)
+        elif request.destination == "transit":
+            result = _store_in_vault_transit(kms_config, secret_name, secret_data, db)
+        else:
+            return KeyReplicationResponse(
+                success=False,
+                message=f"Unsupported destination: {request.destination}",
+                destination=request.destination
+            )
+        
+        if result.get("success"):
+            logger.info(f"Successfully replicated {len(unseal_keys)} keys to {request.destination}")
+            return KeyReplicationResponse(
+                success=True,
+                message=f"Successfully replicated {len(unseal_keys)} unseal keys to {request.destination}",
+                keys_replicated=len(unseal_keys),
+                destination=request.destination,
+                secret_identifier=result.get("identifier")
+            )
+        else:
+            return KeyReplicationResponse(
+                success=False,
+                message=result.get("error", "Unknown error during replication"),
+                destination=request.destination
+            )
+    
+    except Exception as e:
+        logger.error(f"Key replication failed: {e}")
+        return KeyReplicationResponse(
+            success=False,
+            message=f"Failed to replicate keys: {str(e)}",
+            destination=request.destination
+        )
+
+
+def _store_in_aws_secrets_manager(kms_config: dict, secret_name: str, secret_data: str, db: Session) -> dict:
+    """Store keys in AWS Secrets Manager (not KMS directly)"""
+    try:
+        import boto3
+        from app.core.security import decrypt_value
+        
+        region = kms_config.get('region', 'us-east-1')
+        access_key = kms_config.get('access_key')
+        secret_key = kms_config.get('secret_key')
+        
+        # Decrypt credentials if encrypted
+        if access_key:
+            access_key = decrypt_value(access_key, db)
+        if secret_key:
+            secret_key = decrypt_value(secret_key, db)
+        
+        # Create Secrets Manager client
+        if access_key and secret_key:
+            client = boto3.client(
+                'secretsmanager',
+                region_name=region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key
+            )
+        else:
+            # Use IAM role
+            client = boto3.client('secretsmanager', region_name=region)
+        
+        # Try to update existing secret, or create new one
+        try:
+            response = client.put_secret_value(
+                SecretId=secret_name,
+                SecretString=secret_data
+            )
+            return {"success": True, "identifier": response['ARN']}
+        except client.exceptions.ResourceNotFoundException:
+            # Secret doesn't exist, create it
+            response = client.create_secret(
+                Name=secret_name,
+                SecretString=secret_data,
+                Description="Vault unseal keys (replicated for redundancy)"
+            )
+            return {"success": True, "identifier": response['ARN']}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _store_in_gcp_secret_manager(kms_config: dict, secret_name: str, secret_data: str, db: Session) -> dict:
+    """Store keys in GCP Secret Manager"""
+    try:
+        from google.cloud import secretmanager
+        from google.oauth2 import service_account
+        from app.core.security import decrypt_value
+        import json
+        
+        project = kms_config.get('project')
+        credentials_json = kms_config.get('credentials')
+        
+        if credentials_json:
+            credentials_json = decrypt_value(credentials_json, db)
+            creds_dict = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            client = secretmanager.SecretManagerServiceClient(credentials=credentials)
+        else:
+            client = secretmanager.SecretManagerServiceClient()
+        
+        parent = f"projects/{project}"
+        secret_path = f"{parent}/secrets/{secret_name}"
+        
+        # Try to access existing secret
+        try:
+            client.access_secret_version(request={"name": f"{secret_path}/versions/latest"})
+            # Secret exists, add new version
+            response = client.add_secret_version(
+                request={
+                    "parent": secret_path,
+                    "payload": {"data": secret_data.encode("UTF-8")}
+                }
+            )
+            return {"success": True, "identifier": response.name}
+        except Exception:
+            # Secret doesn't exist, create it
+            secret = client.create_secret(
+                request={
+                    "parent": parent,
+                    "secret_id": secret_name,
+                    "secret": {"replication": {"automatic": {}}}
+                }
+            )
+            response = client.add_secret_version(
+                request={
+                    "parent": secret.name,
+                    "payload": {"data": secret_data.encode("UTF-8")}
+                }
+            )
+            return {"success": True, "identifier": response.name}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _store_in_azure_keyvault(kms_config: dict, secret_name: str, secret_data: str, db: Session) -> dict:
+    """Store keys in Azure Key Vault"""
+    try:
+        from azure.identity import ClientSecretCredential
+        from azure.keyvault.secrets import SecretClient
+        from app.core.security import decrypt_value
+        
+        vault_name = kms_config.get('vault_name')
+        tenant_id = kms_config.get('tenant_id')
+        client_id = kms_config.get('client_id')
+        client_secret = kms_config.get('client_secret')
+        
+        # Decrypt credentials
+        if client_secret:
+            client_secret = decrypt_value(client_secret, db)
+        
+        vault_url = f"https://{vault_name}.vault.azure.net"
+        
+        credential = ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        
+        client = SecretClient(vault_url=vault_url, credential=credential)
+        
+        # Azure Key Vault secret names can only contain alphanumeric and hyphens
+        safe_name = secret_name.replace("_", "-")
+        
+        secret = client.set_secret(safe_name, secret_data)
+        return {"success": True, "identifier": secret.id}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _store_in_oci_vault(kms_config: dict, secret_name: str, secret_data: str, db: Session) -> dict:
+    """Store keys in OCI Vault (Secrets service)"""
+    try:
+        import oci
+        import base64
+        from app.core.security import decrypt_value
+        
+        compartment_id = kms_config.get('compartment_ocid')
+        vault_id = kms_config.get('vault_ocid')
+        key_id = kms_config.get('key_ocid')
+        use_instance_principal = kms_config.get('use_instance_principal', False)
+        
+        if use_instance_principal:
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            secrets_client = oci.vault.VaultsClient(config={}, signer=signer)
+            kms_client = oci.key_management.KmsCryptoClient(config={}, signer=signer)
+        else:
+            # Build config from stored values
+            config = {
+                "user": kms_config.get('user_ocid'),
+                "fingerprint": kms_config.get('fingerprint'),
+                "tenancy": kms_config.get('tenancy_ocid'),
+                "region": kms_config.get('region'),
+                "key_file": None  # We'll use key_content
+            }
+            
+            private_key = kms_config.get('private_key')
+            if private_key:
+                private_key = decrypt_value(private_key, db)
+            
+            signer = oci.signer.Signer(
+                tenancy=config["tenancy"],
+                user=config["user"],
+                fingerprint=config["fingerprint"],
+                private_key_content=private_key,
+                private_key_file_location=None
+            )
+            
+            secrets_client = oci.vault.VaultsClient(config=config, signer=signer)
+        
+        # For OCI, we store the encrypted data in a secret
+        # First, get vault info to find the management endpoint
+        vault_endpoint = kms_config.get('crypto_endpoint', '').replace('/crypto', '')
+        if vault_endpoint.endswith('/20180608'):
+            vault_endpoint = vault_endpoint.replace('/20180608', '')
+        
+        # Create secrets client with vault endpoint
+        if use_instance_principal:
+            secrets_client = oci.secrets.SecretsClient(config={}, signer=signer)
+            vaults_client = oci.vault.VaultsClient(config={}, signer=signer)
+        else:
+            config["region"] = kms_config.get('region')
+            secrets_client = oci.secrets.SecretsClient(config=config, signer=signer)
+            vaults_client = oci.vault.VaultsClient(config=config, signer=signer)
+        
+        # Encode the secret data as base64 (OCI requires this)
+        encoded_data = base64.b64encode(secret_data.encode()).decode()
+        
+        # Try to create secret in vault
+        # Note: OCI Vault secrets are more complex - we need to use the Vault management API
+        # For simplicity, we'll use the KMS to encrypt the data and store it locally marked as "replicated"
+        
+        # Get crypto endpoint
+        crypto_endpoint = kms_config.get('crypto_endpoint')
+        if not crypto_endpoint:
+            return {"success": False, "error": "Crypto endpoint not configured"}
+        
+        if use_instance_principal:
+            crypto_client = oci.key_management.KmsCryptoClient(
+                config={}, 
+                signer=signer,
+                service_endpoint=crypto_endpoint
+            )
+        else:
+            crypto_client = oci.key_management.KmsCryptoClient(
+                config=config, 
+                signer=signer,
+                service_endpoint=crypto_endpoint
+            )
+        
+        # Encrypt the data with the key
+        encrypt_response = crypto_client.encrypt(
+            encrypt_data_details=oci.key_management.models.EncryptDataDetails(
+                key_id=key_id,
+                plaintext=encoded_data
+            )
+        )
+        
+        # Store the encrypted data reference in our database
+        encrypted_keys_config = db.query(SystemConfig).filter(
+            SystemConfig.key == "replicated_keys_oci"
+        ).first()
+        
+        import json
+        replicated_data = {
+            "encrypted_data": encrypt_response.data.ciphertext,
+            "key_id": key_id,
+            "replicated_at": datetime.now(timezone.utc).isoformat(),
+            "crypto_endpoint": crypto_endpoint
+        }
+        
+        if encrypted_keys_config:
+            encrypted_keys_config.value = json.dumps(replicated_data)
+        else:
+            encrypted_keys_config = SystemConfig(
+                key="replicated_keys_oci",
+                value=json.dumps(replicated_data)
+            )
+            db.add(encrypted_keys_config)
+        
+        db.commit()
+        
+        return {"success": True, "identifier": f"oci:vault:{vault_id}:key:{key_id}"}
+    
+    except Exception as e:
+        import traceback
+        logger.error(f"OCI replication error: {traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+def _store_in_alicloud_kms(kms_config: dict, secret_name: str, secret_data: str) -> dict:
+    """Store keys in AliCloud KMS Secrets Manager"""
+    try:
+        from alibabacloud_kms20160120.client import Client as KmsClient
+        from alibabacloud_tea_openapi import models as open_api_models
+        from alibabacloud_kms20160120 import models as kms_models
+        
+        config = open_api_models.Config(
+            access_key_id=kms_config.get('access_key_id'),
+            access_key_secret=kms_config.get('access_key_secret'),
+            region_id=kms_config.get('region')
+        )
+        
+        client = KmsClient(config)
+        
+        # Try to create or update secret
+        try:
+            # Try to put secret value (update existing)
+            request = kms_models.PutSecretValueRequest(
+                secret_name=secret_name,
+                secret_data=secret_data,
+                version_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            )
+            response = client.put_secret_value(request)
+            return {"success": True, "identifier": f"alicloud:secret:{secret_name}"}
+        except Exception:
+            # Create new secret
+            request = kms_models.CreateSecretRequest(
+                secret_name=secret_name,
+                secret_data=secret_data,
+                description="Vault unseal keys (replicated for redundancy)"
+            )
+            response = client.create_secret(request)
+            return {"success": True, "identifier": f"alicloud:secret:{secret_name}"}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _store_in_vault_transit(kms_config: dict, secret_name: str, secret_data: str, db: Session) -> dict:
+    """Store keys in another Vault instance using Transit"""
+    try:
+        import hvac
+        from app.core.security import decrypt_value
+        
+        address = kms_config.get('address')
+        token = kms_config.get('token')
+        key_name = kms_config.get('key_name', 'autounseal')
+        mount_path = kms_config.get('mount_path', 'transit')
+        tls_skip_verify = kms_config.get('tls_skip_verify', False)
+        
+        if token:
+            token = decrypt_value(token, db)
+        
+        client = hvac.Client(url=address, token=token, verify=not tls_skip_verify)
+        
+        # Use the KV engine to store the keys (encrypted by Transit)
+        # First encrypt with Transit
+        import base64
+        plaintext = base64.b64encode(secret_data.encode()).decode()
+        
+        encrypt_response = client.secrets.transit.encrypt_data(
+            name=key_name,
+            plaintext=plaintext,
+            mount_point=mount_path
+        )
+        
+        ciphertext = encrypt_response['data']['ciphertext']
+        
+        # Store in KV
+        kv_path = f"replicated-keys/{secret_name}"
+        try:
+            client.secrets.kv.v2.create_or_update_secret(
+                path=kv_path,
+                secret={
+                    "ciphertext": ciphertext,
+                    "key_name": key_name,
+                    "replicated_at": datetime.now(timezone.utc).isoformat()
+                }
+            )
+        except Exception:
+            # Try KV v1
+            client.secrets.kv.v1.create_or_update_secret(
+                path=kv_path,
+                secret={
+                    "ciphertext": ciphertext,
+                    "key_name": key_name,
+                    "replicated_at": datetime.now(timezone.utc).isoformat()
+                }
+            )
+        
+        return {"success": True, "identifier": f"vault:{address}/secret/{kv_path}"}
+    
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class ReplicatedKeyInfo(BaseModel):
+    """Information about a replicated key backup"""
+    destination: str
+    replicated_at: Optional[str] = None
+    identifier: Optional[str] = None
+    status: str = "unknown"
+
+
+class KeyReplicationStatusResponse(BaseModel):
+    """Response with status of all key replications"""
+    has_local_keys: bool
+    local_key_count: int = 0
+    replications: List[ReplicatedKeyInfo]
+
+
+@router.get("/config/vault/replication-status", response_model=KeyReplicationStatusResponse)
+def get_key_replication_status(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get the status of key replications to various KMS providers.
+    """
+    import json
+    from pathlib import Path
+    
+    replications = []
+    
+    # Check local keys
+    has_local_keys = False
+    local_key_count = 0
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+    ]
+    
+    for path in vault_keys_paths:
+        if path.exists():
+            try:
+                with open(path, 'r') as f:
+                    keys_data = json.load(f)
+                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                if keys:
+                    has_local_keys = True
+                    local_key_count = len(keys)
+                    break
+            except:
+                pass
+    
+    # Check for replicated keys in database
+    providers = ["awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "transit"]
+    
+    for provider in providers:
+        # Check if provider is configured and enabled
+        config = db.query(SystemConfig).filter(SystemConfig.key == f"seal_{provider}").first()
+        if config:
+            try:
+                provider_config = json.loads(config.value)
+                if provider_config.get('enabled'):
+                    # Check for replication record
+                    replication_record = db.query(SystemConfig).filter(
+                        SystemConfig.key == f"replicated_keys_{provider}"
+                    ).first()
+                    
+                    if replication_record:
+                        try:
+                            repl_data = json.loads(replication_record.value)
+                            replications.append(ReplicatedKeyInfo(
+                                destination=provider,
+                                replicated_at=repl_data.get('replicated_at'),
+                                identifier=repl_data.get('identifier', repl_data.get('key_id')),
+                                status="replicated"
+                            ))
+                        except:
+                            replications.append(ReplicatedKeyInfo(
+                                destination=provider,
+                                status="configured"
+                            ))
+                    else:
+                        replications.append(ReplicatedKeyInfo(
+                            destination=provider,
+                            status="configured"
+                        ))
+            except:
+                pass
+    
+    return KeyReplicationStatusResponse(
+        has_local_keys=has_local_keys,
+        local_key_count=local_key_count,
+        replications=replications
+    )
 
 
 # =============================================================================

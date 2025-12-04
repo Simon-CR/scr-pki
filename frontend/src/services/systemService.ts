@@ -128,6 +128,37 @@ export interface SealMigrationResponse {
   next_step?: string
 }
 
+// Key Replication System
+export type KeyReplicationSource = 'local_file' | 'manual' | 'shamir'
+
+export interface KeyReplicationRequest {
+  source: KeyReplicationSource
+  source_keys?: string[]
+  destination: string
+  secret_name?: string
+}
+
+export interface KeyReplicationResponse {
+  success: boolean
+  message: string
+  keys_replicated: number
+  destination: string
+  secret_identifier?: string
+}
+
+export interface ReplicatedKeyInfo {
+  destination: string
+  replicated_at?: string
+  identifier?: string
+  status: string
+}
+
+export interface KeyReplicationStatusResponse {
+  has_local_keys: boolean
+  local_key_count: number
+  replications: ReplicatedKeyInfo[]
+}
+
 export const systemService = {
   getSystemCertificate: async (): Promise<SystemCertRequest> => {
     return api.get<SystemCertRequest>('/system/certificate')
@@ -239,6 +270,15 @@ export const systemService = {
 
   deleteProviderConfig: async (provider: string): Promise<{ message: string }> => {
     return api.delete<{ message: string }>(`/system/config/vault/seal/${provider}`)
+  },
+
+  // Key Replication
+  getReplicationStatus: async (): Promise<KeyReplicationStatusResponse> => {
+    return api.get<KeyReplicationStatusResponse>('/system/config/vault/replication-status')
+  },
+
+  replicateKeys: async (data: KeyReplicationRequest): Promise<KeyReplicationResponse> => {
+    return api.post<KeyReplicationResponse>('/system/config/vault/replicate-keys', data)
   },
 
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {
