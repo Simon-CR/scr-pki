@@ -456,9 +456,8 @@ const Certificates: React.FC = () => {
       return
     }
 
-    const years = parseInt(presetValue, 10)
-    if (!Number.isNaN(years)) {
-      const days = years * 365
+    const days = parseInt(presetValue, 10)
+    if (!Number.isNaN(days)) {
       setIssueForm(prev => ({
         ...prev,
         validity_days: days
