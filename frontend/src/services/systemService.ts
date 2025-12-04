@@ -61,7 +61,13 @@ export interface SealConfigRequest {
   config: Record<string, string | boolean | number>
 }
 
-export type SealProvider = 'shamir' | 'transit' | 'awskms' | 'gcpckms' | 'azurekeyvault' | 'ocikms' | 'alicloudkms'
+export type SealProvider = 'shamir' | 'local_file' | 'transit' | 'awskms' | 'gcpckms' | 'azurekeyvault' | 'ocikms' | 'alicloudkms'
+
+export interface KeysFileStatus {
+  exists: boolean
+  key_count: number
+  message: string
+}
 
 export interface Backup {
   filename: string
@@ -139,6 +145,19 @@ export const systemService = {
 
   autoUnsealVault: async (): Promise<{ message: string; method: string }> => {
     return api.post<{ message: string; method: string }>('/system/config/vault/auto-unseal', {})
+  },
+
+  // Vault Keys File (Local Auto-Unseal)
+  getKeysFileStatus: async (): Promise<{ exists: boolean; key_count: number; message: string }> => {
+    return api.get<{ exists: boolean; key_count: number; message: string }>('/system/config/vault/keys-file-status')
+  },
+
+  createKeysFile: async (keys: string[]): Promise<{ message: string; key_count: number; warning: string }> => {
+    return api.post<{ message: string; key_count: number; warning: string }>('/system/config/vault/keys-file', { keys })
+  },
+
+  deleteKeysFile: async (): Promise<{ message: string }> => {
+    return api.delete<{ message: string }>('/system/config/vault/keys-file')
   },
 
   // Seal Configuration (KMS / Transit Auto-Unseal)

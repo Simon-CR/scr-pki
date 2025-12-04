@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from enum import Enum
 import httpx
 import structlog
 import os
@@ -21,7 +22,6 @@ from app.models.system import SystemConfig
 from app.core.security import encrypt_value
 from app.core.config import settings
 from app.services.backup_service import BackupService
-from sqlalchemy import text
 
 from app.models.certificate import Certificate, CertificateStatus
 from app.models.ca import CertificateAuthority
@@ -626,6 +626,167 @@ def auto_unseal_vault(
     )
 
 
+class CreateVaultKeysFileRequest(BaseModel):
+    """Request to create vault_keys.json for local auto-unseal"""
+    keys: List[str]  # The unseal keys (base64 or hex encoded)
+
+
+class VaultKeysFileStatusResponse(BaseModel):
+    """Response for vault_keys.json status"""
+    exists: bool
+    key_count: int = 0
+    message: str
+
+
+@router.get("/config/vault/keys-file-status", response_model=VaultKeysFileStatusResponse)
+def get_vault_keys_file_status(
+    current_user = Depends(require_admin)
+):
+    """
+    Check if vault_keys.json exists and is valid.
+    """
+    import json
+    from pathlib import Path
+    
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    if not vault_keys_path.exists():
+        return VaultKeysFileStatusResponse(
+            exists=False,
+            key_count=0,
+            message="vault_keys.json does not exist. Create it to enable local auto-unseal."
+        )
+    
+    try:
+        with open(vault_keys_path, 'r') as f:
+            keys_data = json.load(f)
+        
+        keys = keys_data.get('keys', [])
+        if not keys:
+            return VaultKeysFileStatusResponse(
+                exists=True,
+                key_count=0,
+                message="vault_keys.json exists but contains no keys."
+            )
+        
+        return VaultKeysFileStatusResponse(
+            exists=True,
+            key_count=len(keys),
+            message=f"vault_keys.json contains {len(keys)} unseal keys."
+        )
+    except json.JSONDecodeError:
+        return VaultKeysFileStatusResponse(
+            exists=True,
+            key_count=0,
+            message="vault_keys.json exists but is not valid JSON."
+        )
+    except Exception as e:
+        return VaultKeysFileStatusResponse(
+            exists=True,
+            key_count=0,
+            message=f"Error reading vault_keys.json: {str(e)}"
+        )
+
+
+@router.post("/config/vault/keys-file", status_code=status.HTTP_201_CREATED)
+def create_vault_keys_file(
+    request: CreateVaultKeysFileRequest,
+    current_user = Depends(require_admin)
+):
+    """
+    Create vault_keys.json for local auto-unseal.
+    
+    This stores the unseal keys in a JSON file for automatic unsealing.
+    
+    WARNING: This stores sensitive cryptographic keys on disk.
+    Only use in dev/test environments or isolated home labs with physical security.
+    For production, use KMS-based auto-unseal.
+    """
+    import json
+    from pathlib import Path
+    
+    if not request.keys or len(request.keys) < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one unseal key is required"
+        )
+    
+    # Validate keys look reasonable (base64 or hex)
+    for i, key in enumerate(request.keys):
+        if not key or len(key) < 20:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Key {i+1} appears to be invalid or too short"
+            )
+    
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.parent.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    # Ensure data directory exists
+    vault_keys_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    keys_data = {
+        "keys": request.keys,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": "scr-pki-web-ui"
+    }
+    
+    try:
+        with open(vault_keys_path, 'w') as f:
+            json.dump(keys_data, f, indent=2)
+        
+        # Set restrictive permissions (600)
+        os.chmod(vault_keys_path, 0o600)
+        
+        logger.info("Created vault_keys.json for local auto-unseal", key_count=len(request.keys))
+        
+        return {
+            "message": f"vault_keys.json created with {len(request.keys)} keys",
+            "key_count": len(request.keys),
+            "warning": "This file contains sensitive cryptographic keys. Only use in dev/test environments."
+        }
+    except Exception as e:
+        logger.error("Failed to create vault_keys.json", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create vault_keys.json: {str(e)}"
+        )
+
+
+@router.delete("/config/vault/keys-file", status_code=status.HTTP_200_OK)
+def delete_vault_keys_file(
+    current_user = Depends(require_admin)
+):
+    """
+    Delete vault_keys.json to disable local auto-unseal.
+    """
+    from pathlib import Path
+    
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    if not vault_keys_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="vault_keys.json does not exist"
+        )
+    
+    try:
+        vault_keys_path.unlink()
+        logger.info("Deleted vault_keys.json")
+        return {"message": "vault_keys.json deleted. Local auto-unseal is now disabled."}
+    except Exception as e:
+        logger.error("Failed to delete vault_keys.json", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete vault_keys.json: {str(e)}"
+        )
+
+
 # =============================================================================
 # Vault Seal Configuration (KMS / Transit Auto-Unseal)
 # =============================================================================
@@ -639,7 +800,6 @@ class SealProvider(str, Enum):
     OCIKMS = "ocikms"
     ALICLOUDKMS = "alicloudkms"
 
-from enum import Enum
 
 class SealConfigBase(BaseModel):
     """Base configuration for all seal types"""

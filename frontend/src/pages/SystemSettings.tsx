@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -49,6 +49,11 @@ const SystemSettings: React.FC = () => {
   const [sealConfigLoading, setSealConfigLoading] = useState(false)
   const [sealTestLoading, setSealTestLoading] = useState(false)
   const [sealFormData, setSealFormData] = useState<Record<string, string | boolean | number>>({})
+  
+  // Local Keys File State
+  const [keysFileStatus, setKeysFileStatus] = useState<KeysFileStatus | null>(null)
+  const [keysFileLoading, setKeysFileLoading] = useState(false)
+  const [localUnsealKeys, setLocalUnsealKeys] = useState<string[]>(['', '', ''])
   
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
@@ -370,6 +375,72 @@ const SystemSettings: React.FC = () => {
     setSealFormData(prev => ({ ...prev, [field]: value }))
   }
 
+  // Local Keys File Functions
+  const loadKeysFileStatus = async () => {
+    try {
+      const status = await systemService.getKeysFileStatus()
+      setKeysFileStatus(status)
+      // If keys file exists, switch to local_file provider display
+      if (status.exists && status.key_count > 0) {
+        setSealProvider('local_file')
+      }
+    } catch (error) {
+      console.error('Failed to load keys file status', error)
+    }
+  }
+
+  const handleCreateKeysFile = async () => {
+    const validKeys = localUnsealKeys.filter(k => k.trim().length > 0)
+    if (validKeys.length < 3) {
+      toast.error('At least 3 unseal keys are required')
+      return
+    }
+
+    const confirmed = await confirm({
+      title: 'Enable Local Auto-Unseal',
+      message: 'This will store your unseal keys in a file for automatic unsealing. This is convenient but less secure than manual unsealing or KMS. Only use in dev/test environments or isolated home labs.',
+      confirmLabel: 'Create Keys File',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setKeysFileLoading(true)
+    try {
+      const result = await systemService.createKeysFile(validKeys)
+      toast.success(result.message)
+      setLocalUnsealKeys(['', '', ''])
+      loadKeysFileStatus()
+      loadAutoUnsealStatus()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to create keys file')
+    } finally {
+      setKeysFileLoading(false)
+    }
+  }
+
+  const handleDeleteKeysFile = async () => {
+    const confirmed = await confirm({
+      title: 'Disable Local Auto-Unseal',
+      message: 'This will delete vault_keys.json and disable local auto-unseal. You will need to manually unseal Vault after restarts.',
+      confirmLabel: 'Delete Keys File',
+      variant: 'danger'
+    })
+    if (!confirmed) return
+
+    setKeysFileLoading(true)
+    try {
+      const result = await systemService.deleteKeysFile()
+      toast.success(result.message)
+      setKeysFileStatus(null)
+      setSealProvider('shamir')
+      loadAutoUnsealStatus()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to delete keys file')
+    } finally {
+      setKeysFileLoading(false)
+    }
+  }
+
   const handleCopyKeys = () => {
     if (!initData) return
     
@@ -472,6 +543,7 @@ const SystemSettings: React.FC = () => {
       // Load auto-unseal status if vault is sealed
       if (data.vault_sealed && data.vault_initialized) {
         loadAutoUnsealStatus()
+        loadKeysFileStatus()
       }
       
       if (silent) return
@@ -995,6 +1067,7 @@ const SystemSettings: React.FC = () => {
                               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                             >
                               <option value="shamir">Manual (Shamir Keys)</option>
+                              <option value="local_file">Local Keys File (vault_keys.json)</option>
                               <option value="transit">Self-Hosted Transit (Another Vault)</option>
                               <option value="awskms">AWS KMS</option>
                               <option value="gcpckms">Google Cloud KMS</option>
@@ -1003,6 +1076,89 @@ const SystemSettings: React.FC = () => {
                               <option value="alicloudkms">AliCloud KMS</option>
                             </select>
                           </div>
+
+                          {/* Local Keys File Configuration */}
+                          {sealProvider === 'local_file' && (
+                            <div className="space-y-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                              <div className="flex items-start">
+                                <FileKey className="h-5 w-5 text-yellow-600 mt-0.5 mr-2 flex-shrink-0" />
+                                <div>
+                                  <h4 className="text-sm font-medium text-yellow-800">Local Keys File Auto-Unseal</h4>
+                                  <p className="mt-1 text-xs text-yellow-700">
+                                    ⚠️ This stores unseal keys on disk. Only use in dev/test or isolated home labs with physical security.
+                                  </p>
+                                </div>
+                              </div>
+                              
+                              {keysFileStatus?.exists ? (
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between p-3 bg-white rounded-md border border-yellow-300">
+                                    <div className="flex items-center">
+                                      <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+                                      <div>
+                                        <p className="text-sm font-medium text-gray-900">vault_keys.json active</p>
+                                        <p className="text-xs text-gray-500">{keysFileStatus.key_count} unseal keys stored</p>
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={handleDeleteKeysFile}
+                                      disabled={keysFileLoading}
+                                      className="inline-flex items-center px-3 py-1.5 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                                    >
+                                      {keysFileLoading ? <LoadingSpinner size="sm" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                                      Delete
+                                    </button>
+                                  </div>
+                                  <p className="text-xs text-yellow-700">
+                                    Vault will automatically unseal on restart using these stored keys.
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <p className="text-sm text-gray-700">
+                                    Enter your unseal keys below to create the local keys file:
+                                  </p>
+                                  {localUnsealKeys.map((key, idx) => (
+                                    <input
+                                      key={idx}
+                                      type="password"
+                                      placeholder={`Unseal Key ${idx + 1}`}
+                                      value={key}
+                                      onChange={(e) => {
+                                        const newKeys = [...localUnsealKeys]
+                                        newKeys[idx] = e.target.value
+                                        setLocalUnsealKeys(newKeys)
+                                      }}
+                                      className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                  ))}
+                                  <button
+                                    type="button"
+                                    onClick={() => setLocalUnsealKeys([...localUnsealKeys, ''])}
+                                    className="text-sm text-indigo-600 hover:text-indigo-500"
+                                  >
+                                    + Add another key
+                                  </button>
+                                  <div className="pt-2">
+                                    <button
+                                      type="button"
+                                      onClick={handleCreateKeysFile}
+                                      disabled={keysFileLoading || localUnsealKeys.filter(k => k.trim()).length < 3}
+                                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 disabled:opacity-50"
+                                    >
+                                      {keysFileLoading ? (
+                                        <LoadingSpinner size="sm" className="mr-2" />
+                                      ) : (
+                                        <FileKey className="h-4 w-4 mr-2" />
+                                      )}
+                                      Enable Local Auto-Unseal
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {/* Transit Configuration */}
                           {sealProvider === 'transit' && (
@@ -1343,7 +1499,8 @@ const SystemSettings: React.FC = () => {
                             </div>
                           )}
 
-                          {/* Action Buttons */}
+                          {/* Action Buttons - Hide for local_file since it has its own buttons */}
+                          {sealProvider !== 'local_file' && (
                           <div className="flex items-center space-x-3 pt-4">
                             {sealProvider !== 'shamir' && (
                               <button
@@ -1385,6 +1542,7 @@ const SystemSettings: React.FC = () => {
                               </button>
                             )}
                           </div>
+                          )}
 
                           {/* Migration Notice */}
                           {sealConfig?.requires_migration && (

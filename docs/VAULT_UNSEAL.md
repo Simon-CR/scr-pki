@@ -1,6 +1,6 @@
 # Vault Unsealing Options
 
-HashiCorp Vault uses a sealing mechanism to protect its encryption keys. When Vault starts or restarts, it is in a "sealed" state and cannot access its data until it is unsealed. This document covers four options for unsealing Vault in SCR-PKI.
+HashiCorp Vault uses a sealing mechanism to protect its encryption keys. When Vault starts or restarts, it is in a "sealed" state and cannot access its data until it is unsealed. This document covers the options for unsealing Vault in SCR-PKI.
 
 ## Overview
 
@@ -8,8 +8,9 @@ HashiCorp Vault uses a sealing mechanism to protect its encryption keys. When Va
 |--------|---------------|------------|------------|----------|
 | [Option 1: Local Auto-Unseal](#option-1-local-auto-unseal-with-vault_keysjson) | ⚠️ Low | ✅ Full | 🟢 Easy | Development, isolated home labs |
 | [Option 2: Manual Unseal](#option-2-manual-unseal-via-web-ui) | ✅ High | ❌ None | 🟢 Easy | Production with operator availability |
-| [Option 3: Self-Hosted Transit Auto-Unseal](#option-3-self-hosted-transit-auto-unseal) | ✅ High | ✅ Full | 🟡 Medium | Self-hosted, no cloud dependency |
-| [Option 4: Cloud KMS Auto-Unseal](#option-4-cloud-kms-auto-unseal) | ✅ High | ✅ Full | 🟡 Medium | Cloud-based, high availability |
+| [Option 3: Web UI Seal Configuration](#option-3-web-ui-seal-configuration) | ✅ High | ✅ Full | 🟢 Easy | Configure any seal method via UI |
+| [Option 4: Self-Hosted Transit Auto-Unseal](#option-4-self-hosted-transit-auto-unseal) | ✅ High | ✅ Full | 🟡 Medium | Self-hosted, no cloud dependency |
+| [Option 5: Cloud KMS Auto-Unseal](#option-5-cloud-kms-auto-unseal) | ✅ High | ✅ Full | 🟡 Medium | Cloud-based, high availability |
 
 ---
 
@@ -86,7 +87,18 @@ If you need to manually create or restore a `vault_keys.json` file, use this for
 - `unseal_threshold`: Number of keys required to unseal (default: 3)
 - `root_token`: The Vault root token for initial configuration
 
-3. **Create an Auto-Unseal Script** (Optional)
+3. **Auto-Unseal via Web UI** ⭐ **Easiest Method**
+
+   If `vault_keys.json` exists in the `data/` directory, the Web UI will show an "Auto-Unseal Available" button when Vault is sealed:
+
+   1. Navigate to **System Settings → Vault tab**
+   2. When Vault is sealed, you'll see "Vault Sealed" status
+   3. If `vault_keys.json` is detected, an **"Auto-Unseal Available"** button appears
+   4. Click the button and confirm to automatically unseal Vault
+
+   > ⚠️ **Note**: This option is only available when `vault_keys.json` is present on the server. For production, consider using the Web UI Seal Configuration (Option 3) to set up Transit or Cloud KMS auto-unseal.
+
+4. **Create an Auto-Unseal Script** (Optional - CLI alternative)
 
    Create `/usr/local/bin/vault-unseal.sh`:
 
@@ -111,7 +123,7 @@ If you need to manually create or restore a `vault_keys.json` file, use this for
    echo "Vault unsealed successfully"
    ```
 
-4. **Auto-Unseal on Boot** (Optional)
+5. **Auto-Unseal on Boot** (Optional)
 
    Add a systemd service or cron job:
 
@@ -205,7 +217,71 @@ Unseal Progress    0/3
 
 ---
 
-## Option 3: Self-Hosted Transit Auto-Unseal
+## Option 3: Web UI Seal Configuration
+
+SCR-PKI allows you to configure Vault's seal type entirely through the Web UI, without modifying `docker-compose.yml` or environment files. This is the recommended method for setting up auto-unseal with Transit or Cloud KMS providers.
+
+### Supported Seal Providers
+
+| Provider | Description |
+|----------|-------------|
+| **Shamir** | Default manual unseal with key shares |
+| **Transit** | Use another Vault instance for auto-unseal |
+| **AWS KMS** | Amazon Key Management Service |
+| **GCP Cloud KMS** | Google Cloud Key Management Service |
+| **Azure Key Vault** | Microsoft Azure Key Vault |
+| **OCI KMS** | Oracle Cloud Infrastructure KMS |
+| **AliCloud KMS** | Alibaba Cloud Key Management Service |
+
+### How to Configure
+
+1. **Navigate to System Settings**
+   - Go to **System Settings → Vault tab**
+   - Scroll to the **Seal Configuration** section
+
+2. **Select a Provider**
+   - Choose your preferred seal provider from the dropdown
+   - Fill in the provider-specific configuration fields
+
+3. **Provider Configuration Examples**
+
+   **Transit (Self-Hosted Vault):**
+   - Address: `https://transit-vault.example.com:8200`
+   - Token: `hvs.your-transit-token`
+   - Key Name: `autounseal`
+   - Mount Path: `transit`
+
+   **AWS KMS:**
+   - Region: `us-east-1`
+   - KMS Key ID: `alias/vault-unseal` or full ARN
+   - Access Key ID: Your AWS access key
+   - Secret Access Key: Your AWS secret key
+
+   **GCP Cloud KMS:**
+   - Project: `my-project-id`
+   - Region: `us-central1`
+   - Key Ring: `vault-keyring`
+   - Crypto Key: `vault-key`
+
+4. **Save Configuration**
+   - Click **Save Seal Configuration**
+   - The configuration is stored securely in the database (credentials are encrypted)
+
+5. **Perform Seal Migration**
+   - After saving, you must perform a seal migration
+   - This requires your current unseal keys (from `vault_keys.json` or backup)
+   - Follow Vault's seal migration process
+
+### Security Notes
+
+- All credentials (tokens, secret keys) are encrypted before storage
+- Configuration is stored in the database, not in files
+- You can update or delete the configuration at any time via the UI
+- Deleting the configuration reverts to Shamir (manual) unseal
+
+---
+
+## Option 4: Self-Hosted Transit Auto-Unseal
 
 This option uses a separate Vault instance (running outside the SCR-PKI stack) to provide auto-unseal functionality. It offers the security benefits of KMS auto-unseal without requiring cloud services or internet connectivity.
 
@@ -422,9 +498,11 @@ cluster_addr = "https://kms-vault.example.com:8201"
 
 ---
 
-## Option 4: Cloud KMS Auto-Unseal
+## Option 5: Cloud KMS Auto-Unseal
 
 This option uses a cloud Key Management Service to automatically unseal Vault. The master key is encrypted by the cloud KMS, so Vault can unseal itself without storing keys locally.
+
+> 💡 **Tip**: You can also configure Cloud KMS auto-unseal via the Web UI (Option 3) without modifying any configuration files.
 
 ### Supported Cloud Providers
 
