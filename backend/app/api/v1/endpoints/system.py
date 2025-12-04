@@ -1426,7 +1426,7 @@ def save_seal_config(
                 "You can perform seal migration automatically or manually:",
                 "",
                 "AUTOMATIC (Recommended):",
-                "  Click 'Perform Migration' button below and enter your unseal keys.",
+                "  Enter your unseal keys above and click 'Start Automated Migration'.",
                 "  SCR-PKI will restart Vault and perform the migration for you.",
                 "",
                 "MANUAL:",

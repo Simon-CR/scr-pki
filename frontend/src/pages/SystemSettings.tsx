@@ -457,7 +457,7 @@ const SystemSettings: React.FC = () => {
     try {
       const result = await systemService.performSealMigration({
         action: 'start',
-        unseal_keys: validKeys.length > 0 ? validKeys : undefined
+        unseal_keys: validKeys
       })
       setMigrationResult(result)
       if (result.success) {
