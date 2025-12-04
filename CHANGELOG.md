@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - 2025-12-04
+
+### Fixed
+- **Validity Preset Bug**: Fixed certificate validity dropdown multiplying days by 365 incorrectly (e.g., selecting "2 years" resulted in 266,450 days instead of 730)
+
 ## [0.2.6] - 2025-12-03
 
 ### Added
