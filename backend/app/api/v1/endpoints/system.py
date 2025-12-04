@@ -1138,15 +1138,40 @@ def save_seal_config(
     
     logger.info("Vault seal configuration saved", provider=provider, enabled=request.enabled)
     
+    # Build detailed next steps
+    if request.enabled and provider != 'shamir':
+        next_steps = [
+            "Configuration saved! To complete seal migration:",
+            "",
+            "Step 1: Stop the SCR-PKI stack",
+            "  docker compose down",
+            "",
+            "Step 2: Start ONLY the Vault container in migration mode",
+            "  docker compose up -d pki_vault",
+            "",
+            "Step 3: Wait for Vault to start, then unseal with migration flag",
+            "  docker exec pki_vault vault operator unseal -migrate <KEY_1>",
+            "  docker exec pki_vault vault operator unseal -migrate <KEY_2>",
+            "  docker exec pki_vault vault operator unseal -migrate <KEY_3>",
+            "  (Use 3 of your 5 original Shamir unseal keys)",
+            "",
+            "Step 4: Verify migration succeeded",
+            "  docker exec pki_vault vault status",
+            "  (Seal Type should now show: " + provider + ")",
+            "",
+            "Step 5: Restart the full stack",
+            "  docker compose down && docker compose up -d",
+            "",
+            "Note: After successful migration, Vault will auto-unseal using " + provider + "."
+        ]
+    else:
+        next_steps = []
+    
     return {
         "message": f"Seal configuration saved for {provider}",
         "provider": provider,
         "enabled": request.enabled,
-        "next_steps": [
-            "1. Restart the Vault container",
-            "2. Unseal with current keys using -migrate flag",
-            "3. Vault will re-encrypt master key with new seal"
-        ] if request.enabled and provider != 'shamir' else []
+        "next_steps": next_steps
     }
 
 
@@ -1273,7 +1298,120 @@ def test_seal_config(
         except Exception as e:
             return {"success": False, "message": f"AWS KMS test failed: {str(e)}"}
     
-    # For other providers, return a generic response
+    elif provider == "gcpckms":
+        # Test GCP Cloud KMS connectivity
+        try:
+            from google.cloud import kms
+            from google.oauth2 import service_account
+            
+            project = config.get('project')
+            location = config.get('region')
+            key_ring = config.get('key_ring')
+            crypto_key = config.get('crypto_key')
+            credentials_json = config.get('credentials')
+            
+            if credentials_json:
+                import json
+                creds_dict = json.loads(credentials_json)
+                credentials = service_account.Credentials.from_service_account_info(creds_dict)
+                client = kms.KeyManagementServiceClient(credentials=credentials)
+            else:
+                client = kms.KeyManagementServiceClient()
+            
+            # Build the key name
+            key_name = client.crypto_key_path(project, location, key_ring, crypto_key)
+            
+            # Try to get the key
+            key = client.get_crypto_key(request={"name": key_name})
+            
+            return {"success": True, "message": f"GCP KMS connection successful. Key '{crypto_key}' accessible."}
+            
+        except ImportError:
+            return {"success": False, "message": "google-cloud-kms not installed. Cannot test GCP KMS."}
+        except Exception as e:
+            return {"success": False, "message": f"GCP KMS test failed: {str(e)}"}
+    
+    elif provider == "ocikms":
+        # Test OCI KMS connectivity
+        try:
+            import oci
+            
+            # Build config
+            oci_config = {
+                "user": config.get('auth_type_api_key_user_ocid', ''),
+                "fingerprint": config.get('auth_type_api_key_fingerprint', ''),
+                "tenancy": config.get('auth_type_api_key_tenancy_ocid', ''),
+                "region": config.get('region', ''),
+                "key_content": config.get('auth_type_api_key_private_key', ''),
+            }
+            
+            # Validate required fields
+            missing_fields = [k for k, v in oci_config.items() if not v and k != 'key_content']
+            if missing_fields:
+                return {"success": False, "message": f"Missing required OCI configuration: {', '.join(missing_fields)}"}
+            
+            # Check if using instance principal
+            if config.get('auth_type_use_instance_principal'):
+                signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                kms_client = oci.key_management.KmsManagementClient({}, signer=signer)
+            else:
+                if not oci_config.get('key_content'):
+                    return {"success": False, "message": "Private key is required for API key authentication"}
+                kms_client = oci.key_management.KmsManagementClient(oci_config)
+            
+            # Set the endpoint
+            management_endpoint = config.get('management_endpoint', '')
+            if management_endpoint:
+                kms_client.base_client.endpoint = management_endpoint
+            
+            # Try to get key info
+            key_id = config.get('key_id', '')
+            if not key_id:
+                return {"success": False, "message": "Key ID (OCID) is required"}
+            
+            key = kms_client.get_key(key_id)
+            
+            return {"success": True, "message": f"OCI KMS connection successful. Key '{key.data.display_name}' accessible."}
+            
+        except ImportError:
+            return {"success": False, "message": "oci SDK not installed. Cannot test OCI KMS."}
+        except oci.exceptions.ServiceError as e:
+            return {"success": False, "message": f"OCI KMS error: {e.message}"}
+        except Exception as e:
+            return {"success": False, "message": f"OCI KMS test failed: {str(e)}"}
+    
+    elif provider == "azurekeyvault":
+        # Test Azure Key Vault connectivity
+        try:
+            from azure.identity import ClientSecretCredential, DefaultAzureCredential
+            from azure.keyvault.keys import KeyClient
+            
+            vault_name = config.get('vault_name', '')
+            key_name = config.get('key_name', '')
+            tenant_id = config.get('tenant_id', '')
+            client_id = config.get('client_id', '')
+            client_secret = config.get('client_secret', '')
+            
+            vault_url = f"https://{vault_name}.vault.azure.net"
+            
+            if client_id and client_secret and tenant_id:
+                credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+            else:
+                credential = DefaultAzureCredential()
+            
+            key_client = KeyClient(vault_url, credential)
+            
+            # Try to get the key
+            key = key_client.get_key(key_name)
+            
+            return {"success": True, "message": f"Azure Key Vault connection successful. Key '{key_name}' accessible."}
+            
+        except ImportError:
+            return {"success": False, "message": "azure-identity and azure-keyvault-keys not installed. Cannot test Azure Key Vault."}
+        except Exception as e:
+            return {"success": False, "message": f"Azure Key Vault test failed: {str(e)}"}
+    
+    # For other providers (alicloudkms), return a generic response
     return {
         "success": None,
         "message": f"Connectivity test not yet implemented for {provider}. Configuration saved but not validated."

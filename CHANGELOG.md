@@ -12,18 +12,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Detects `vault_keys.json` file in data directory
   - Shows "Auto-Unseal Available" button with clear warnings about production use
   - Includes confirmation dialog before unsealing
-  - Future support for KMS-based auto-unseal planned
+- **Auto-Unseal on Startup**: Backend now automatically attempts to unseal Vault on startup
+  - Checks for `vault_keys.json` in data directory
+  - Unseals Vault before establishing connection if keys are available
+  - Logs detailed status messages during auto-unseal process
+- **Local Keys File Management via Web UI**: Create `vault_keys.json` directly from the UI
+  - Enter unseal keys in the Auto-Unseal Configuration section
+  - Click "Enable Local Auto-Unseal" to create the file
+  - View status and delete the file when no longer needed
 - **Seal Configuration via Web UI**: Complete auto-unseal configuration through the UI
   - Configure Vault seal type without docker-compose or .env changes
   - Support for multiple providers: Transit, AWS KMS, GCP Cloud KMS, Azure Key Vault, OCI KMS, AliCloud KMS
   - Credentials stored securely in database with encryption
   - Per-provider configuration forms with all required settings
   - View, update, or delete seal configurations at any time
-- **Vault Unseal Documentation**: New comprehensive `docs/VAULT_UNSEAL.md` with 4 options:
+- **KMS Connection Testing**: Test connectivity to KMS providers before saving
+  - Transit: Verifies Vault health and transit key accessibility
+  - AWS KMS: Tests key access using boto3
+  - GCP Cloud KMS: Tests key access using google-cloud-kms
+  - Azure Key Vault: Tests key access using azure-identity
+  - OCI KMS: Tests key access using oci SDK
+- **Detailed Migration Instructions**: After saving seal config, displays step-by-step migration commands
+  - Shows exact docker commands needed for seal migration
+  - Includes copy-to-clipboard functionality
+  - Terminal-style formatted display
+- **Vault Unseal Documentation**: New comprehensive `docs/VAULT_UNSEAL.md` with options:
   - Option 1: Local auto-unseal with `vault_keys.json`
   - Option 2: Manual unseal via Web UI
-  - Option 3: Self-hosted Transit auto-unseal (for secure home labs)
-  - Option 4: Cloud KMS (AWS, GCP, Azure, OCI, AliCloud)
+  - Option 3: Web UI Seal Configuration
+  - Option 4: Self-hosted Transit auto-unseal
+  - Option 5: Cloud KMS (AWS, GCP, Azure, OCI, AliCloud)
 - **vault_keys.json.example**: Added example file showing the correct format for unseal keys
 
 ### Changed
@@ -32,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Port References**: Standardized documentation to use ports 443/80 instead of mixed references to 9443/8080
+- **Enum Import**: Fixed missing `Enum` import in system.py that caused backend startup failure
 
 ## [0.2.9] - 2025-12-04
 

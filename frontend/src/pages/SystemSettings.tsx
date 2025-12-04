@@ -49,6 +49,7 @@ const SystemSettings: React.FC = () => {
   const [sealConfigLoading, setSealConfigLoading] = useState(false)
   const [sealTestLoading, setSealTestLoading] = useState(false)
   const [sealFormData, setSealFormData] = useState<Record<string, string | boolean | number>>({})
+  const [migrationSteps, setMigrationSteps] = useState<string[] | null>(null)
   
   // Local Keys File State
   const [keysFileStatus, setKeysFileStatus] = useState<KeysFileStatus | null>(null)
@@ -289,6 +290,8 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
+      // Also load keys file status when loading seal config
+      loadKeysFileStatus()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
@@ -315,7 +318,7 @@ const SystemSettings: React.FC = () => {
       const result = await systemService.saveSealConfig(request)
       toast.success(result.message)
       if (result.next_steps && result.next_steps.length > 0) {
-        toast(result.next_steps.join('\n'), { duration: 8000, icon: '📋' })
+        setMigrationSteps(result.next_steps)
       }
       loadSealConfig()
     } catch (error: any) {
@@ -1551,6 +1554,42 @@ const SystemSettings: React.FC = () => {
                                 ⚠️ <strong>Migration Required:</strong> {sealConfig.migration_instructions || 
                                   'Restart Vault and unseal with your current keys using the -migrate flag.'}
                               </p>
+                            </div>
+                          )}
+
+                          {/* Migration Steps (after save) */}
+                          {migrationSteps && migrationSteps.length > 0 && (
+                            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+                              <div className="flex items-start justify-between mb-2">
+                                <h4 className="text-sm font-medium text-blue-800 flex items-center">
+                                  📋 Seal Migration Instructions
+                                </h4>
+                                <button
+                                  type="button"
+                                  onClick={() => setMigrationSteps(null)}
+                                  className="text-blue-400 hover:text-blue-600"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </button>
+                              </div>
+                              <div className="bg-gray-900 text-gray-100 rounded-md p-3 text-xs font-mono overflow-x-auto">
+                                {migrationSteps.map((step, idx) => (
+                                  <div key={idx} className={step === '' ? 'h-2' : 'leading-relaxed'}>
+                                    {step}
+                                  </div>
+                                ))}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(migrationSteps.join('\n'))
+                                  toast.success('Instructions copied to clipboard')
+                                }}
+                                className="mt-2 inline-flex items-center text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                <Copy className="h-3 w-3 mr-1" />
+                                Copy to clipboard
+                              </button>
                             </div>
                           )}
                         </div>

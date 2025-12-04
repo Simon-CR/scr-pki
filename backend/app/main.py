@@ -102,6 +102,9 @@ async def lifespan(app: FastAPI):
     # await create_default_admin()
     
     # Initialize Vault connection
+    # First check if Vault is sealed and we have auto-unseal keys
+    await try_auto_unseal_vault()
+    
     # Try to connect again now that DB is initialized (in case token is stored there)
     if not vault_client.is_authenticated():
         vault_client.connect()
@@ -126,6 +129,79 @@ async def lifespan(app: FastAPI):
     # Shutdown
     scheduler_service.stop()
     logger.info("Shutting down SCR-PKI API")
+
+
+async def try_auto_unseal_vault():
+    """
+    Attempt to automatically unseal Vault on startup using vault_keys.json.
+    This runs before the main Vault connection to ensure Vault is unsealed.
+    """
+    import json
+    from pathlib import Path
+    
+    # Check if Vault is sealed first
+    try:
+        # Create a temporary client just to check seal status
+        import hvac
+        temp_client = hvac.Client(url=settings.VAULT_ADDR)
+        seal_status = temp_client.sys.read_seal_status()
+        
+        if not seal_status.get('sealed', True):
+            logger.info("Vault is already unsealed")
+            return
+        
+        if not seal_status.get('initialized', False):
+            logger.info("Vault is not initialized yet - skipping auto-unseal")
+            return
+            
+        logger.info("Vault is sealed - checking for auto-unseal keys")
+        
+    except Exception as e:
+        logger.warning(f"Could not check Vault seal status: {e}")
+        return
+    
+    # Look for vault_keys.json
+    vault_keys_path = Path("/app/data/vault_keys.json")
+    if not vault_keys_path.exists():
+        vault_keys_path = Path("data/vault_keys.json")
+    
+    if not vault_keys_path.exists():
+        logger.info("No vault_keys.json found - manual unseal required")
+        return
+    
+    try:
+        with open(vault_keys_path, 'r') as f:
+            keys_data = json.load(f)
+        
+        keys = keys_data.get('keys', [])
+        if not keys:
+            logger.warning("vault_keys.json exists but contains no keys")
+            return
+        
+        logger.info(f"Found {len(keys)} unseal keys in vault_keys.json - attempting auto-unseal")
+        
+        # Unseal using the keys
+        for key in keys:
+            try:
+                response = temp_client.sys.submit_unseal_key(key)
+                if not response.get('sealed', True):
+                    logger.info("Vault auto-unsealed successfully on startup")
+                    return
+            except Exception as e:
+                logger.warning(f"Unseal key submission failed: {e}")
+                continue
+        
+        # Check final status
+        final_status = temp_client.sys.read_seal_status()
+        if final_status.get('sealed', True):
+            logger.error("Vault remains sealed after using all available keys")
+        else:
+            logger.info("Vault auto-unsealed successfully on startup")
+            
+    except json.JSONDecodeError:
+        logger.error("vault_keys.json is not valid JSON")
+    except Exception as e:
+        logger.error(f"Auto-unseal failed: {e}")
 
 
 # Create FastAPI application
