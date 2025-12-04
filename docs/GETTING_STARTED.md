@@ -48,7 +48,6 @@ Key configuration options:
 ```bash
 # General Settings
 PKI_DOMAIN=pki.homelab.local  # Your PKI server hostname
-WEB_PORT=8080                  # Web interface port
 
 # Certificate Authority Settings
 CA_COMMON_NAME=HomeLab Root CA
@@ -128,14 +127,16 @@ Look for: `✓ Application started successfully`
 Open your browser and navigate to:
 
 ```
-http://localhost:8080
+https://localhost
 ```
 
 Or use your configured domain:
 
 ```
-http://pki.homelab.local:8080
+https://pki.homelab.local
 ```
+
+**Note:** Accept the self-signed certificate warning on first access.
 
 **First-time login**:
 - Username: `admin` (or your configured `ADMIN_USERNAME`)
@@ -368,12 +369,12 @@ docker-compose logs monitor
 
 2. Check nginx logs:
    ```bash
-   docker-compose logs nginx
+   docker compose logs nginx
    ```
 
 3. Verify port is not in use:
    ```bash
-   lsof -i :8080
+   lsof -i :443
    ```
 
 ### Vault Sealed
@@ -381,7 +382,7 @@ docker-compose logs monitor
 If Vault becomes sealed:
 
 ```bash
-docker-compose exec vault vault operator unseal
+docker compose exec vault vault operator unseal
 ```
 
 Enter the unseal key(s) when prompted.

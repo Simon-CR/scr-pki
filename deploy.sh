@@ -50,29 +50,11 @@ fi
 
 # 3. Directory Structure
 echo -e "\n${YELLOW}[3/5] Creating directory structure...${NC}"
-mkdir -p data/{certs,logs/{backend,frontend,nginx,monitor},postgres,vault/{data,logs,config}}
+mkdir -p data/{certs,logs/{backend,frontend,nginx,monitor},postgres,vault/{data,logs}}
 chmod 755 data
 chmod -R 755 data/logs
 chmod 700 data/vault/data
-
-# Create Vault config for production
-cat > data/vault/config/vault.hcl << EOF
-ui = true
-disable_mlock = true
-
-storage "file" {
-  path = "/vault/data"
-}
-
-listener "tcp" {
-  address = "0.0.0.0:8200"
-  tls_disable = 1
-}
-
-api_addr = "http://127.0.0.1:8200"
-cluster_addr = "http://127.0.0.1:8201"
-EOF
-echo "✅ Directories and configuration created."
+echo "✅ Directories created."
 
 # 4. Start Services
 echo -e "\n${YELLOW}[4/5] Starting services...${NC}"
@@ -147,6 +129,6 @@ fi
 
 echo -e "\n${GREEN}🎉 Deployment Complete!${NC}"
 echo "------------------------------------------------"
-echo "Frontend: https://localhost:9443 (Accept self-signed cert)"
-echo "Vault UI: https://localhost:9443/ui/"
+echo "Frontend: https://localhost (Accept self-signed cert)"
+echo "Vault UI: https://localhost/ui/"
 echo "------------------------------------------------"

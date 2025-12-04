@@ -64,8 +64,8 @@ SCR-PKI provides a complete solution for managing SSL/TLS certificates in your h
    - **Initialize and Unseal Vault** (and save your keys to `vault_keys.json`)
 
 2. **Access the Platform:**
-   - **Frontend:** https://localhost:9443 (Accept the self-signed certificate warning)
-   - **Vault UI:** https://localhost:9443/ui/
+   - **Frontend:** https://localhost (Accept the self-signed certificate warning)
+   - **Vault UI:** https://localhost/ui/
 
 3. **Default Credentials:**
    - **Username:** `admin`
@@ -90,10 +90,10 @@ cp .env.example .env
 nano .env
 
 # Start the platform
-docker-compose up -d
+docker compose up -d
 
 # Access the web interface
-open http://localhost:8080
+open https://localhost
 ```
 
 See [GETTING_STARTED.md](docs/GETTING_STARTED.md) for detailed setup instructions.
