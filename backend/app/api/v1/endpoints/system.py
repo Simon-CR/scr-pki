@@ -1632,7 +1632,7 @@ def delete_provider_seal_config(
     )
 
 
-@router.post("/config/vault/seal/test", status_code=status.HTTP_200_OK)
+@router.post("/config/vault/seal-test", status_code=status.HTTP_200_OK)
 def test_seal_config(
     request: SealConfigRequest,
     db: Session = Depends(get_db),

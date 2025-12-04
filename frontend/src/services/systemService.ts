@@ -212,7 +212,7 @@ export const systemService = {
   },
 
   testSealConfig: async (data: SealConfigRequest): Promise<{ success: boolean | null; message: string }> => {
-    return api.post<{ success: boolean | null; message: string }>('/system/config/vault/seal/test', data)
+    return api.post<{ success: boolean | null; message: string }>('/system/config/vault/seal-test', data)
   },
 
   performSealMigration: async (data: SealMigrationRequest): Promise<SealMigrationResponse> => {
