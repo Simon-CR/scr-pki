@@ -313,7 +313,8 @@ const SystemSettings: React.FC = () => {
     const priority = newMethods.map(m => m.method)
     try {
       await systemService.updateUnsealPriority(priority)
-      setUnsealMethods(newMethods.map((m, i) => ({ ...m, priority: i })))
+      // Reload to get updated active method
+      await loadUnsealPriority()
       toast.success('Priority updated')
     } catch (error: any) {
       toast.error('Failed to update priority')
@@ -331,7 +332,8 @@ const SystemSettings: React.FC = () => {
     const priority = newMethods.map(m => m.method)
     try {
       await systemService.updateUnsealPriority(priority)
-      setUnsealMethods(newMethods.map((m, i) => ({ ...m, priority: i })))
+      // Reload to get updated active method
+      await loadUnsealPriority()
       toast.success('Priority updated')
     } catch (error: any) {
       toast.error('Failed to update priority')
