@@ -118,7 +118,7 @@ const Dashboard: React.FC = () => {
 
   const activeAlerts = (alerts ?? []).filter(alert => alert.status === 'active')
   const healthyServices = (services ?? []).filter(
-    service => service.status === 'active' && service.last_check_result === 'success'
+    service => service.status?.toUpperCase() === 'ACTIVE' && service.last_check_result?.toUpperCase() === 'SUCCESS'
   )
   const totalServices = services?.length ?? 0
   const serviceUptime = totalServices ? Math.round((healthyServices.length / totalServices) * 100) : 100
@@ -398,7 +398,7 @@ const Dashboard: React.FC = () => {
                     </div>
                     <span
                       className={`text-xs px-3 py-1 rounded-full ${
-                        service.status === 'active' && service.last_check_result === 'success'
+                        service.status?.toUpperCase() === 'ACTIVE' && service.last_check_result?.toUpperCase() === 'SUCCESS'
                           ? 'bg-emerald-500/20 text-emerald-200'
                           : 'bg-rose-500/20 text-rose-200'
                       }`}
