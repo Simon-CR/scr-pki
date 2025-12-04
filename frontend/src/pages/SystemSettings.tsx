@@ -1082,11 +1082,16 @@ const SystemSettings: React.FC = () => {
                         <div className="flex items-center">
                           <Shield className="h-5 w-5 text-indigo-500 mr-2" />
                           <span className="text-lg font-medium text-gray-900">Auto-Unseal Configuration</span>
-                          {sealConfig?.configured && sealConfig.enabled && (
+                          {/* Show badge based on actual active method - prioritize local keys file */}
+                          {keysFileStatus?.exists && keysFileStatus.key_count > 0 ? (
+                            <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              LOCAL FILE
+                            </span>
+                          ) : sealConfig?.configured && sealConfig.enabled ? (
                             <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                               {sealConfig.provider.toUpperCase()}
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         {sealConfigExpanded ? (
                           <ChevronUp className="h-5 w-5 text-gray-400" />
@@ -1100,10 +1105,58 @@ const SystemSettings: React.FC = () => {
 
                       {sealConfigExpanded && (
                         <div className="mt-4 space-y-4">
+                          {/* Current Active Method Display */}
+                          <div className="p-4 bg-gray-50 border border-gray-200 rounded-md">
+                            <h4 className="text-sm font-medium text-gray-900 mb-2">Currently Active Method</h4>
+                            {keysFileStatus?.exists && keysFileStatus.key_count > 0 ? (
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+                                  <div>
+                                    <p className="text-sm font-medium text-green-700">Local Keys File (vault_keys.json)</p>
+                                    <p className="text-xs text-gray-500">{keysFileStatus.key_count} unseal keys stored - auto-unseal on restart</p>
+                                  </div>
+                                </div>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  ACTIVE
+                                </span>
+                              </div>
+                            ) : sealConfig?.configured && sealConfig.enabled ? (
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+                                  <div>
+                                    <p className="text-sm font-medium text-green-700">
+                                      {sealConfig.provider === 'transit' ? 'Self-Hosted Transit' :
+                                       sealConfig.provider === 'awskms' ? 'AWS KMS' :
+                                       sealConfig.provider === 'gcpckms' ? 'Google Cloud KMS' :
+                                       sealConfig.provider === 'azurekeyvault' ? 'Azure Key Vault' :
+                                       sealConfig.provider === 'ocikms' ? 'Oracle OCI KMS' :
+                                       sealConfig.provider === 'alicloudkms' ? 'AliCloud KMS' :
+                                       sealConfig.provider.toUpperCase()}
+                                    </p>
+                                    <p className="text-xs text-gray-500">KMS-based auto-unseal configured</p>
+                                  </div>
+                                </div>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  ACTIVE
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center">
+                                <Lock className="h-5 w-5 text-gray-400 mr-2" />
+                                <div>
+                                  <p className="text-sm font-medium text-gray-700">Manual (Shamir Keys)</p>
+                                  <p className="text-xs text-gray-500">Requires manual unseal after each Vault restart</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
                           {/* Provider Selection */}
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Unseal Method
+                              Configure Unseal Method
                             </label>
                             <select
                               value={sealProvider}

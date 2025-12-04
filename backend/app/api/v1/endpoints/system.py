@@ -547,12 +547,36 @@ def get_auto_unseal_status(
     """
     Check if auto-unseal is available.
     Returns whether vault_keys.json exists or KMS is configured.
+    Priority: vault_keys.json > KMS configuration
     """
     import json
     from pathlib import Path
     from app.core.security import decrypt_value
     
-    # Check for KMS configuration in database first (higher priority)
+    # Check for vault_keys.json FIRST (local file takes priority when it exists)
+    vault_keys_paths = [
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
+    
+    for vault_keys_path in vault_keys_paths:
+        if vault_keys_path.exists():
+            try:
+                with open(vault_keys_path, 'r') as f:
+                    keys_data = json.load(f)
+                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                if keys and len(keys) > 0:
+                    return AutoUnsealStatusResponse(
+                        available=True,
+                        method="vault_keys_json",
+                        message=f"Local auto-unseal ({len(keys)} keys in vault_keys.json)"
+                    )
+            except Exception as e:
+                logger.warning("Failed to read vault_keys.json", error=str(e))
+    
+    # Check for KMS configuration in database (fallback)
     kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
     if kms_config:
         try:
@@ -575,29 +599,6 @@ def get_auto_unseal_status(
                 )
         except Exception as e:
             logger.warning("Failed to read KMS config from DB", error=str(e))
-    
-    # Check for vault_keys.json in data directory
-    vault_keys_path = Path("/app/data/vault_keys.json")
-    if not vault_keys_path.exists():
-        vault_keys_path = Path("data/vault_keys.json")
-    
-    if vault_keys_path.exists():
-        try:
-            with open(vault_keys_path, 'r') as f:
-                keys_data = json.load(f)
-            if 'keys' in keys_data and len(keys_data.get('keys', [])) > 0:
-                return AutoUnsealStatusResponse(
-                    available=True,
-                    method="vault_keys_json",
-                    message="Unseal keys found in vault_keys.json"
-                )
-        except Exception as e:
-            logger.warning("Failed to read vault_keys.json", error=str(e))
-    
-    # Future: Check for KMS configuration in database
-    # kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_kms_config").first()
-    # if kms_config:
-    #     return AutoUnsealStatusResponse(available=True, method="kms", message="KMS auto-unseal configured")
     
     return AutoUnsealStatusResponse(
         available=False,
