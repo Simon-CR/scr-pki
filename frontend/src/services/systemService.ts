@@ -90,6 +90,20 @@ export interface VersionCheckResponse {
   docker_image_available?: boolean
 }
 
+export interface SealMigrationRequest {
+  unseal_keys?: string[]
+  action: 'start' | 'status'
+}
+
+export interface SealMigrationResponse {
+  success: boolean
+  message: string
+  status?: string
+  docker_available: boolean
+  steps_completed?: string[]
+  next_step?: string
+}
+
 export const systemService = {
   getSystemCertificate: async (): Promise<SystemCertRequest> => {
     return api.get<SystemCertRequest>('/system/certificate')
@@ -175,6 +189,10 @@ export const systemService = {
 
   testSealConfig: async (data: SealConfigRequest): Promise<{ success: boolean | null; message: string }> => {
     return api.post<{ success: boolean | null; message: string }>('/system/config/vault/seal/test', data)
+  },
+
+  performSealMigration: async (data: SealMigrationRequest): Promise<SealMigrationResponse> => {
+    return api.post<SealMigrationResponse>('/system/config/vault/seal/migrate', data)
   },
 
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {

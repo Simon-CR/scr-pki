@@ -75,6 +75,58 @@ def get_system_certificate(
         auto_restart=False
     )
 
+
+def is_docker_available() -> bool:
+    """Check if Docker socket is available for container management."""
+    try:
+        import docker
+        try:
+            client = docker.from_env()
+            client.ping()
+            return True
+        except:
+            client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+            client.ping()
+            return True
+    except:
+        return False
+
+
+def get_docker_client():
+    """Get a Docker client, trying multiple methods."""
+    import docker
+    try:
+        client = docker.from_env()
+        client.ping()
+        return client
+    except Exception as e:
+        logger.warning(f"docker.from_env() failed: {e}. Trying explicit socket.")
+        client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+        return client
+
+
+def restart_container(container_name: str, wait_before: int = 2):
+    """
+    Restart a container by name.
+    
+    Args:
+        container_name: Name of the container to restart
+        wait_before: Seconds to wait before restarting (to allow API response)
+    """
+    try:
+        if wait_before > 0:
+            time.sleep(wait_before)
+        
+        client = get_docker_client()
+        container = client.containers.get(container_name)
+        container.restart()
+        logger.info(f"Container {container_name} restarted successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to restart container {container_name}", error=str(e))
+        return False
+
+
 def restart_nginx_container():
     """
     Restart the Nginx container in the background.
@@ -1138,32 +1190,54 @@ def save_seal_config(
     
     logger.info("Vault seal configuration saved", provider=provider, enabled=request.enabled)
     
+    # Check if Docker socket is available for automatic restart
+    docker_available = is_docker_available()
+    
     # Build detailed next steps
     if request.enabled and provider != 'shamir':
-        next_steps = [
-            "Configuration saved! To complete seal migration:",
-            "",
-            "Step 1: Stop the SCR-PKI stack",
-            "  docker compose down",
-            "",
-            "Step 2: Start ONLY the Vault container in migration mode",
-            "  docker compose up -d pki_vault",
-            "",
-            "Step 3: Wait for Vault to start, then unseal with migration flag",
-            "  docker exec pki_vault vault operator unseal -migrate <KEY_1>",
-            "  docker exec pki_vault vault operator unseal -migrate <KEY_2>",
-            "  docker exec pki_vault vault operator unseal -migrate <KEY_3>",
-            "  (Use 3 of your 5 original Shamir unseal keys)",
-            "",
-            "Step 4: Verify migration succeeded",
-            "  docker exec pki_vault vault status",
-            "  (Seal Type should now show: " + provider + ")",
-            "",
-            "Step 5: Restart the full stack",
-            "  docker compose down && docker compose up -d",
-            "",
-            "Note: After successful migration, Vault will auto-unseal using " + provider + "."
-        ]
+        if docker_available:
+            next_steps = [
+                "Configuration saved! Docker socket detected.",
+                "",
+                "You can perform seal migration automatically or manually:",
+                "",
+                "AUTOMATIC (Recommended):",
+                "  Click 'Perform Migration' button below and enter your unseal keys.",
+                "  SCR-PKI will restart Vault and perform the migration for you.",
+                "",
+                "MANUAL:",
+                "  1. Stop SCR-PKI: docker compose down",
+                "  2. Start Vault only: docker compose up -d pki_vault",
+                "  3. Unseal with migration:",
+                "     docker exec pki_vault vault operator unseal -migrate <KEY>",
+                "     (repeat with 3 keys)",
+                "  4. Restart all: docker compose up -d",
+            ]
+        else:
+            next_steps = [
+                "Configuration saved! To complete seal migration:",
+                "",
+                "Step 1: Stop the SCR-PKI stack",
+                "  docker compose down",
+                "",
+                "Step 2: Start ONLY the Vault container in migration mode",
+                "  docker compose up -d pki_vault",
+                "",
+                "Step 3: Wait for Vault to start, then unseal with migration flag",
+                "  docker exec pki_vault vault operator unseal -migrate <KEY_1>",
+                "  docker exec pki_vault vault operator unseal -migrate <KEY_2>",
+                "  docker exec pki_vault vault operator unseal -migrate <KEY_3>",
+                "  (Use 3 of your 5 original Shamir unseal keys)",
+                "",
+                "Step 4: Verify migration succeeded",
+                "  docker exec pki_vault vault status",
+                "  (Seal Type should now show: " + provider + ")",
+                "",
+                "Step 5: Restart the full stack",
+                "  docker compose down && docker compose up -d",
+                "",
+                "Note: After successful migration, Vault will auto-unseal using " + provider + "."
+            ]
     else:
         next_steps = []
     
@@ -1171,6 +1245,7 @@ def save_seal_config(
         "message": f"Seal configuration saved for {provider}",
         "provider": provider,
         "enabled": request.enabled,
+        "docker_available": docker_available,
         "next_steps": next_steps
     }
 
@@ -1416,6 +1491,250 @@ def test_seal_config(
         "success": None,
         "message": f"Connectivity test not yet implemented for {provider}. Configuration saved but not validated."
     }
+
+
+class SealMigrationRequest(BaseModel):
+    unseal_keys: List[str] = []  # Required for migration from Shamir
+    action: str = "start"  # "start", "status", "complete"
+
+
+class SealMigrationResponse(BaseModel):
+    success: bool
+    message: str
+    status: Optional[str] = None  # "not_started", "in_progress", "completed", "failed"
+    docker_available: bool = False
+    steps_completed: Optional[List[str]] = None
+    next_step: Optional[str] = None
+
+
+@router.post("/config/vault/seal/migrate", response_model=SealMigrationResponse)
+def perform_seal_migration(
+    request: SealMigrationRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Perform seal migration with optional Docker automation.
+    
+    If Docker socket is available:
+    - Automatically restarts Vault container
+    - Performs migration with provided unseal keys
+    - Returns status of migration
+    
+    If Docker socket is NOT available:
+    - Returns manual steps required
+    """
+    import subprocess
+    import httpx
+    from pathlib import Path
+    
+    docker_available = is_docker_available()
+    action = request.action.lower()
+    
+    # Check if seal config exists
+    config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
+    if not config:
+        return SealMigrationResponse(
+            success=False,
+            message="No seal configuration found. Save a seal config first.",
+            status="not_started",
+            docker_available=docker_available
+        )
+    
+    # Get Vault status
+    try:
+        vault_client = get_vault_client()
+        vault_status = vault_client.get_status()
+    except Exception as e:
+        return SealMigrationResponse(
+            success=False,
+            message=f"Cannot connect to Vault: {str(e)}",
+            status="failed",
+            docker_available=docker_available
+        )
+    
+    if action == "status":
+        # Just return current migration status
+        return SealMigrationResponse(
+            success=True,
+            message="Status check complete",
+            status="ready" if vault_status.get("initialized") else "not_initialized",
+            docker_available=docker_available
+        )
+    
+    if action == "start":
+        if not docker_available:
+            # Return manual migration steps
+            return SealMigrationResponse(
+                success=False,
+                message="Docker socket not available. Manual migration required.",
+                status="manual_required",
+                docker_available=False,
+                steps_completed=[],
+                next_step="Run migration commands manually in the Vault container"
+            )
+        
+        # Docker is available - perform automated migration
+        steps_completed = []
+        
+        try:
+            import docker
+            client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+            
+            # Step 1: Ensure seal.hcl config is in place
+            seal_config_path = Path("/app/data/vault/config/seal.hcl")
+            if not seal_config_path.exists():
+                return SealMigrationResponse(
+                    success=False,
+                    message="Seal configuration file not found. Save seal config first.",
+                    status="failed",
+                    docker_available=True
+                )
+            steps_completed.append("Seal configuration file verified")
+            
+            # Step 2: Check if we have unseal keys (from request or vault_keys.json)
+            unseal_keys = request.unseal_keys
+            if not unseal_keys:
+                # Try to load from vault_keys.json
+                keys_paths = [
+                    Path("/app/data/vault/vault_keys.json"),
+                    Path("data/vault/vault_keys.json")
+                ]
+                for keys_path in keys_paths:
+                    if keys_path.exists():
+                        import json
+                        with open(keys_path, 'r') as f:
+                            keys_data = json.load(f)
+                            unseal_keys = keys_data.get('unseal_keys', []) or keys_data.get('keys', [])
+                            if unseal_keys:
+                                steps_completed.append(f"Loaded unseal keys from {keys_path}")
+                                break
+            
+            if not unseal_keys:
+                return SealMigrationResponse(
+                    success=False,
+                    message="No unseal keys provided and vault_keys.json not found. Provide unseal keys to migrate.",
+                    status="keys_required",
+                    docker_available=True,
+                    steps_completed=steps_completed,
+                    next_step="Provide your Shamir unseal keys to perform migration"
+                )
+            
+            steps_completed.append(f"Have {len(unseal_keys)} unseal keys ready")
+            
+            # Step 3: Restart Vault container (this loads the new seal config)
+            try:
+                vault_container = client.containers.get("pki_vault")
+                vault_container.restart()
+                steps_completed.append("Vault container restarted")
+            except docker.errors.NotFound:
+                # Try alternate name
+                try:
+                    vault_container = client.containers.get("pki-vault-1")
+                    vault_container.restart()
+                    steps_completed.append("Vault container restarted")
+                except:
+                    return SealMigrationResponse(
+                        success=False,
+                        message="Vault container not found. Check container name.",
+                        status="failed",
+                        docker_available=True,
+                        steps_completed=steps_completed
+                    )
+            
+            # Step 4: Wait for Vault to be ready (but sealed)
+            import time
+            time.sleep(5)  # Give Vault time to start
+            
+            # Step 5: Unseal with -migrate flag
+            # We need to exec into the container to run vault operator unseal -migrate
+            try:
+                for i, key in enumerate(unseal_keys):
+                    # Run unseal command with migrate flag
+                    exec_result = vault_container.exec_run(
+                        f"vault operator unseal -migrate {key}",
+                        environment={"VAULT_ADDR": "http://127.0.0.1:8200"}
+                    )
+                    
+                    output = exec_result.output.decode('utf-8', errors='ignore')
+                    
+                    if exec_result.exit_code != 0:
+                        if "Unseal Key (will be hidden)" in output or "Error" in output:
+                            return SealMigrationResponse(
+                                success=False,
+                                message=f"Unseal key {i+1} failed: {output}",
+                                status="failed",
+                                docker_available=True,
+                                steps_completed=steps_completed
+                            )
+                    
+                    # Check if unsealed
+                    if "Sealed" in output and "false" in output.lower():
+                        steps_completed.append(f"Migration complete with {i+1} keys")
+                        break
+                    else:
+                        steps_completed.append(f"Applied unseal key {i+1}")
+                
+            except Exception as e:
+                return SealMigrationResponse(
+                    success=False,
+                    message=f"Failed to run unseal command: {str(e)}",
+                    status="failed",
+                    docker_available=True,
+                    steps_completed=steps_completed
+                )
+            
+            # Step 6: Verify migration succeeded
+            time.sleep(2)
+            try:
+                vault_client = get_vault_client()
+                new_status = vault_client.get_status()
+                
+                if not new_status.get("sealed", True):
+                    steps_completed.append("Vault is now unsealed with new seal configuration")
+                    
+                    return SealMigrationResponse(
+                        success=True,
+                        message="Seal migration completed successfully! Vault is now using auto-unseal.",
+                        status="completed",
+                        docker_available=True,
+                        steps_completed=steps_completed
+                    )
+                else:
+                    return SealMigrationResponse(
+                        success=False,
+                        message="Vault is still sealed after migration. May need more unseal keys.",
+                        status="incomplete",
+                        docker_available=True,
+                        steps_completed=steps_completed,
+                        next_step="Provide additional unseal keys if threshold not met"
+                    )
+                    
+            except Exception as e:
+                return SealMigrationResponse(
+                    success=False,
+                    message=f"Could not verify Vault status after migration: {str(e)}",
+                    status="unknown",
+                    docker_available=True,
+                    steps_completed=steps_completed
+                )
+                
+        except Exception as e:
+            logger.error("Seal migration failed", error=str(e))
+            return SealMigrationResponse(
+                success=False,
+                message=f"Migration failed: {str(e)}",
+                status="failed",
+                docker_available=True,
+                steps_completed=steps_completed
+            )
+    
+    return SealMigrationResponse(
+        success=False,
+        message=f"Unknown action: {action}",
+        status="error",
+        docker_available=docker_available
+    )
 
 
 class VaultInitResponse(BaseModel):

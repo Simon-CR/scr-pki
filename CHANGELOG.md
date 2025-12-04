@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shows exact docker commands needed for seal migration
   - Includes copy-to-clipboard functionality
   - Terminal-style formatted display
+- **Automated Seal Migration**: When Docker socket is available, perform migrations automatically
+  - New `/api/v1/system/config/vault/seal/migrate` endpoint
+  - Automatically restarts Vault container and applies unseal keys with -migrate flag
+  - Can use provided keys or load from vault_keys.json
+  - Real-time progress reporting with steps completed
+  - Falls back to manual instructions when Docker socket unavailable
 - **Vault Unseal Documentation**: New comprehensive `docs/VAULT_UNSEAL.md` with options:
   - Option 1: Local auto-unseal with `vault_keys.json`
   - Option 2: Manual unseal via Web UI

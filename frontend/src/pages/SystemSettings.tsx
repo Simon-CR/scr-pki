@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus } from '../services/systemService'
+import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey } from 'lucide-react'
@@ -55,6 +55,11 @@ const SystemSettings: React.FC = () => {
   const [keysFileStatus, setKeysFileStatus] = useState<KeysFileStatus | null>(null)
   const [keysFileLoading, setKeysFileLoading] = useState(false)
   const [localUnsealKeys, setLocalUnsealKeys] = useState<string[]>(['', '', ''])
+  
+  // Seal Migration State
+  const [migrationLoading, setMigrationLoading] = useState(false)
+  const [migrationResult, setMigrationResult] = useState<SealMigrationResponse | null>(null)
+  const [migrationUnsealKeys, setMigrationUnsealKeys] = useState<string[]>(['', '', ''])
   
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SystemCertRequest>({
     defaultValues: {
@@ -371,6 +376,45 @@ const SystemSettings: React.FC = () => {
       toast.error(error.response?.data?.detail || 'Failed to remove configuration')
     } finally {
       setSealConfigLoading(false)
+    }
+  }
+
+  const handleStartMigration = async () => {
+    // Get unseal keys from migrationUnsealKeys if provided, or try without (will use vault_keys.json)
+    const validKeys = migrationUnsealKeys.filter(k => k.trim().length > 0)
+    
+    const confirmed = await confirm({
+      title: 'Start Seal Migration',
+      message: validKeys.length > 0 
+        ? `This will restart Vault and migrate to the new seal configuration using ${validKeys.length} unseal keys. The system may be briefly unavailable.`
+        : 'This will restart Vault and attempt migration using keys from vault_keys.json. The system may be briefly unavailable.',
+      confirmLabel: 'Start Migration',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setMigrationLoading(true)
+    setMigrationResult(null)
+    try {
+      const result = await systemService.performSealMigration({
+        action: 'start',
+        unseal_keys: validKeys.length > 0 ? validKeys : undefined
+      })
+      setMigrationResult(result)
+      if (result.success) {
+        toast.success(result.message)
+        // Clear migration steps since migration is complete
+        setMigrationSteps(null)
+        // Reload health and seal config
+        onCheckHealth(false)
+        loadSealConfig()
+      } else {
+        toast.error(result.message)
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Migration failed')
+    } finally {
+      setMigrationLoading(false)
     }
   }
 
@@ -1572,6 +1616,89 @@ const SystemSettings: React.FC = () => {
                                   <XCircle className="h-4 w-4" />
                                 </button>
                               </div>
+                              
+                              {/* Docker Automation Available */}
+                              {config?.docker_available && (
+                                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
+                                  <p className="text-sm text-green-800 mb-3">
+                                    ✅ <strong>Docker Available:</strong> You can perform automated migration.
+                                  </p>
+                                  
+                                  {/* Optional: provide unseal keys for migration */}
+                                  <div className="mb-3">
+                                    <p className="text-xs text-green-700 mb-2">
+                                      Enter your Shamir unseal keys (or leave blank to use vault_keys.json):
+                                    </p>
+                                    <div className="space-y-2">
+                                      {migrationUnsealKeys.map((key, idx) => (
+                                        <input
+                                          key={idx}
+                                          type="password"
+                                          value={key}
+                                          onChange={(e) => {
+                                            const newKeys = [...migrationUnsealKeys]
+                                            newKeys[idx] = e.target.value
+                                            setMigrationUnsealKeys(newKeys)
+                                          }}
+                                          placeholder={`Unseal Key ${idx + 1}`}
+                                          className="w-full px-2 py-1 text-xs border rounded font-mono"
+                                        />
+                                      ))}
+                                      <button
+                                        type="button"
+                                        onClick={() => setMigrationUnsealKeys([...migrationUnsealKeys, ''])}
+                                        className="text-xs text-green-600 hover:text-green-800"
+                                      >
+                                        + Add another key
+                                      </button>
+                                    </div>
+                                  </div>
+                                  
+                                  <button
+                                    type="button"
+                                    onClick={handleStartMigration}
+                                    disabled={migrationLoading}
+                                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                                  >
+                                    {migrationLoading ? (
+                                      <>
+                                        <RefreshCw className="animate-spin h-4 w-4 mr-2" />
+                                        Migrating...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Zap className="h-4 w-4 mr-2" />
+                                        Start Automated Migration
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              )}
+                              
+                              {/* Migration Result */}
+                              {migrationResult && (
+                                <div className={`mb-3 p-2 rounded text-sm ${migrationResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                  <p><strong>{migrationResult.success ? '✅' : '❌'} {migrationResult.message}</strong></p>
+                                  {migrationResult.steps_completed && migrationResult.steps_completed.length > 0 && (
+                                    <ul className="mt-2 text-xs list-disc list-inside">
+                                      {migrationResult.steps_completed.map((step, idx) => (
+                                        <li key={idx}>{step}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {migrationResult.next_step && (
+                                    <p className="mt-2 text-xs">Next: {migrationResult.next_step}</p>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {/* Manual instructions fallback */}
+                              {!config?.docker_available && (
+                                <p className="mb-2 text-xs text-blue-700">
+                                  Docker socket not available. Follow manual steps below:
+                                </p>
+                              )}
+                              
                               <div className="bg-gray-900 text-gray-100 rounded-md p-3 text-xs font-mono overflow-x-auto">
                                 {migrationSteps.map((step, idx) => (
                                   <div key={idx} className={step === '' ? 'h-2' : 'leading-relaxed'}>
