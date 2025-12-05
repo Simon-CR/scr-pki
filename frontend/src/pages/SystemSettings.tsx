@@ -519,9 +519,10 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
-      // Also load keys file status and priority when loading seal config
+      // Also load keys file status, priority, and auto-unseal status when loading seal config
       loadKeysFileStatus()
       loadUnsealPriority()
+      loadAutoUnsealStatus()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
