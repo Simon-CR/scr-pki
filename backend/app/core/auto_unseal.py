@@ -805,6 +805,25 @@ class AutoUnsealKeyManager:
                 pass
         return None
     
+    def get_wrapped_dek_record(self, db, provider: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the full wrapped DEK record for a specific provider.
+        This includes the wrapped DEK and the config used to wrap it.
+        """
+        from app.models.system import SystemConfig
+        
+        dek_key = f"{self.DB_KEY_WRAPPED_DEK_PREFIX}{provider}"
+        config = db.query(SystemConfig).filter(
+            SystemConfig.key == dek_key
+        ).first()
+        
+        if config:
+            try:
+                return json.loads(config.value)
+            except:
+                pass
+        return None
+    
     def get_local_dek(self, db) -> Optional[bytes]:
         """
         Get the locally stored DEK.
@@ -855,7 +874,7 @@ class AutoUnsealKeyManager:
         self,
         db,
         provider: str,
-        kms_config: dict
+        kms_config: dict = None
     ) -> Tuple[Optional[List[str]], Optional[str]]:
         """
         Retrieve and decrypt unseal keys using the specified provider.
@@ -863,7 +882,7 @@ class AutoUnsealKeyManager:
         Args:
             db: Database session
             provider: KMS provider to use
-            kms_config: Provider configuration
+            kms_config: Provider configuration (optional, will use stored config if not provided)
             
         Returns:
             Tuple of (unseal_keys, error_message)
@@ -879,11 +898,33 @@ class AutoUnsealKeyManager:
             if not dek:
                 return None, "Local DEK not found"
         else:
-            wrapped_dek = self.get_wrapped_dek(db, provider)
-            if not wrapped_dek:
+            # Get the wrapped DEK record which includes config
+            dek_record = self.get_wrapped_dek_record(db, provider)
+            if not dek_record:
                 return None, f"Wrapped DEK not found for provider {provider}"
             
-            dek = self.unwrap_dek(wrapped_dek, provider, kms_config)
+            wrapped_dek = dek_record.get("wrapped_dek")
+            if not wrapped_dek:
+                return None, f"No wrapped DEK in record for {provider}"
+            
+            # Use stored config from the DEK record, or override with provided config
+            unwrap_config = {
+                "key_id": dek_record.get("key_id"),
+                "crypto_endpoint": dek_record.get("crypto_endpoint"),
+                "key_name": dek_record.get("key_name"),
+                "keyring": dek_record.get("keyring"),
+                "project": dek_record.get("project"),
+                "location": dek_record.get("location"),
+                "vault_url": dek_record.get("vault_url"),
+                "vault_addr": dek_record.get("vault_addr"),
+                "vault_token": dek_record.get("vault_token"),
+                "transit_key": dek_record.get("transit_key"),
+            }
+            # Override with provided config if any
+            if kms_config:
+                unwrap_config.update(kms_config)
+            
+            dek = self.unwrap_dek(wrapped_dek, provider, unwrap_config)
             if not dek:
                 return None, f"Failed to unwrap DEK with {provider}"
         
@@ -893,6 +934,116 @@ class AutoUnsealKeyManager:
             return unseal_keys, None
         except Exception as e:
             return None, f"Failed to decrypt unseal keys: {e}"
+    
+    def auto_unseal_vault(self, db) -> Dict[str, Any]:
+        """
+        Automatically unseal Vault using stored keys.
+        Tries providers in priority order: cloud KMS providers first, then local.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Dict with success status and details
+        """
+        import requests
+        
+        # Check if Vault is already unsealed
+        vault_url = os.environ.get("VAULT_ADDR", "http://vault:8200")
+        try:
+            status_resp = requests.get(f"{vault_url}/v1/sys/seal-status", timeout=5)
+            if status_resp.status_code == 200:
+                status = status_resp.json()
+                if not status.get("sealed", True):
+                    return {
+                        "success": True,
+                        "message": "Vault is already unsealed",
+                        "sealed": False
+                    }
+                threshold = status.get("t", 3)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to check Vault status: {e}"
+            }
+        
+        # Get available providers
+        providers = self.get_available_providers(db)
+        if not providers:
+            return {
+                "success": False,
+                "error": "No KMS providers available for auto-unseal"
+            }
+        
+        # Priority order: cloud KMS first, local last
+        priority_order = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
+        sorted_providers = sorted(providers, key=lambda p: priority_order.index(p) if p in priority_order else 100)
+        
+        # Try each provider
+        last_error = None
+        for provider in sorted_providers:
+            logger.info(f"Attempting auto-unseal with provider: {provider}")
+            
+            keys, error = self.retrieve_unseal_keys(db, provider)
+            if error:
+                logger.warning(f"Failed to retrieve keys with {provider}: {error}")
+                last_error = error
+                continue
+            
+            if not keys:
+                logger.warning(f"No keys retrieved from {provider}")
+                last_error = "No keys retrieved"
+                continue
+            
+            # Try to unseal with retrieved keys
+            try:
+                unseal_count = 0
+                for key in keys[:threshold]:
+                    unseal_resp = requests.put(
+                        f"{vault_url}/v1/sys/unseal",
+                        json={"key": key},
+                        timeout=10
+                    )
+                    if unseal_resp.status_code == 200:
+                        result = unseal_resp.json()
+                        unseal_count += 1
+                        if not result.get("sealed", True):
+                            return {
+                                "success": True,
+                                "message": f"Vault unsealed successfully using {provider}",
+                                "provider": provider,
+                                "keys_used": unseal_count,
+                                "sealed": False
+                            }
+                    else:
+                        logger.error(f"Unseal request failed: {unseal_resp.status_code}")
+                        break
+                
+                # Check final status
+                status_resp = requests.get(f"{vault_url}/v1/sys/seal-status", timeout=5)
+                if status_resp.status_code == 200:
+                    status = status_resp.json()
+                    if not status.get("sealed", True):
+                        return {
+                            "success": True,
+                            "message": f"Vault unsealed successfully using {provider}",
+                            "provider": provider,
+                            "keys_used": unseal_count,
+                            "sealed": False
+                        }
+                    else:
+                        last_error = f"Vault still sealed after {unseal_count} keys"
+                        
+            except Exception as e:
+                logger.error(f"Error during unseal with {provider}: {e}")
+                last_error = str(e)
+                continue
+        
+        return {
+            "success": False,
+            "error": f"All providers failed. Last error: {last_error}",
+            "providers_tried": sorted_providers
+        }
 
 
 # Singleton instance

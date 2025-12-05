@@ -637,7 +637,7 @@ class AutoUnsealRequest(BaseModel):
 
 
 @router.post("/config/vault/auto-unseal", status_code=status.HTTP_200_OK)
-def auto_unseal_vault(
+def auto_unseal_vault_endpoint(
     request: AutoUnsealRequest = AutoUnsealRequest(),
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
@@ -648,133 +648,79 @@ def auto_unseal_vault(
     Tries providers in priority order:
     1. Preferred provider (if specified)
     2. vault_keys.json (legacy)
-    3. KMS providers in configured priority order
+    3. Cloud KMS providers (OCI, GCP, AWS, Azure)
     4. Local database encryption
     """
     import json
     from pathlib import Path
     from app.core.auto_unseal import auto_unseal_manager
     
-    errors = []
-    
-    # Build list of providers to try
-    providers_to_try = []
-    
-    if request.preferred_provider:
-        providers_to_try.append(request.preferred_provider)
-    
-    # Get priority order from database
-    priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
-    if priority_config:
-        try:
-            priority_order = json.loads(priority_config.value)
-        except:
-            priority_order = ["local_file", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
-    else:
-        priority_order = ["local_file", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
-    
-    # Add vault_keys.json as first option (legacy support)
-    if "vault_keys_json" not in providers_to_try:
-        providers_to_try.insert(0, "vault_keys_json")
-    
-    # Add remaining providers from priority order
-    for provider in priority_order:
-        if provider not in providers_to_try:
-            providers_to_try.append(provider)
-    
-    # Try each provider
-    for provider in providers_to_try:
-        logger.info(f"Attempting auto-unseal with provider: {provider}")
+    # If preferred provider is specified and it's not vault_keys_json, use it directly
+    if request.preferred_provider and request.preferred_provider not in ["vault_keys_json", "legacy"]:
+        keys, error = auto_unseal_manager.retrieve_unseal_keys(db, request.preferred_provider)
+        if error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to retrieve keys with {request.preferred_provider}: {error}"
+            )
         
-        try:
-            keys = None
-            
-            if provider == "vault_keys_json":
-                # Legacy: Try vault_keys.json file
-                vault_keys_paths = [
-                    Path("/app/vault_data/vault_keys.json"),
-                    Path("/app/data/vault/vault_keys.json"),
-                    Path("/app/data/vault_keys.json"),
-                    Path("data/vault/vault_keys.json"),
-                    Path("data/vault_keys.json")
-                ]
-                
-                for path in vault_keys_paths:
-                    if path.exists():
-                        try:
-                            with open(path, 'r') as f:
-                                keys_data = json.load(f)
-                            keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                            if keys:
-                                break
-                        except:
-                            pass
-                
-                if not keys:
-                    continue
-                    
-            elif provider in ["local", "local_file"]:
-                # Try local database encryption
-                keys, error = auto_unseal_manager.retrieve_unseal_keys(db, "local", {})
-                if error:
-                    errors.append(f"local: {error}")
-                    continue
-                    
+        if keys:
+            result = vault_client.unseal_vault(keys)
+            if result.get('sealed') is False:
+                vault_client.connect()
+                logger.info(f"Vault auto-unsealed successfully using {request.preferred_provider}")
+                return {
+                    "message": f"Vault unsealed successfully using {request.preferred_provider}",
+                    "method": request.preferred_provider
+                }
             else:
-                # Try KMS provider
-                # Get provider config
-                config = db.query(SystemConfig).filter(
-                    SystemConfig.key == f"seal_{provider}"
-                ).first()
-                if not config:
-                    config = db.query(SystemConfig).filter(
-                        SystemConfig.key == f"vault_seal_{provider}"
-                    ).first()
-                
-                if not config:
-                    continue
-                
-                try:
-                    decrypted = decrypt_value(config.value)
-                    kms_config = json.loads(decrypted)
-                except Exception as e:
-                    errors.append(f"{provider}: Failed to read config: {e}")
-                    continue
-                
-                if not kms_config.get('enabled'):
-                    continue
-                
-                keys, error = auto_unseal_manager.retrieve_unseal_keys(db, provider, kms_config)
-                if error:
-                    errors.append(f"{provider}: {error}")
-                    continue
-            
-            if keys:
-                # Attempt to unseal with the keys
-                result = vault_client.unseal_vault(keys)
-                
-                if result.get('sealed') is False:
-                    # Success!
-                    vault_client.connect()
-                    logger.info(f"Vault auto-unsealed successfully using {provider}")
-                    return {
-                        "message": f"Vault unsealed successfully using {provider}",
-                        "method": provider
-                    }
-                else:
-                    errors.append(f"{provider}: Vault remained sealed after applying keys")
-                    
-        except Exception as e:
-            errors.append(f"{provider}: {str(e)}")
-            logger.warning(f"Auto-unseal with {provider} failed: {e}")
-            continue
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Vault remained sealed after applying keys from {request.preferred_provider}"
+                )
     
-    # All methods failed
-    error_details = "; ".join(errors) if errors else "No auto-unseal methods available"
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Auto-unseal failed. Errors: {error_details}"
-    )
+    # Try legacy vault_keys.json first (for backward compatibility)
+    vault_keys_paths = [
+        Path("/app/vault_data/vault_keys.json"),
+        Path("/app/data/vault/vault_keys.json"),
+        Path("/app/data/vault_keys.json"),
+        Path("data/vault/vault_keys.json"),
+        Path("data/vault_keys.json")
+    ]
+    
+    for path in vault_keys_paths:
+        if path.exists():
+            try:
+                with open(path, 'r') as f:
+                    keys_data = json.load(f)
+                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                if keys:
+                    result = vault_client.unseal_vault(keys)
+                    if result.get('sealed') is False:
+                        vault_client.connect()
+                        logger.info("Vault auto-unsealed successfully using vault_keys.json")
+                        return {
+                            "message": "Vault unsealed successfully using vault_keys.json",
+                            "method": "vault_keys_json"
+                        }
+            except Exception as e:
+                logger.warning(f"Failed to use vault_keys.json at {path}: {e}")
+    
+    # Use the auto_unseal_vault method from the manager
+    result = auto_unseal_manager.auto_unseal_vault(db)
+    
+    if result.get("success"):
+        vault_client.connect()
+        return {
+            "message": result.get("message", "Vault unsealed successfully"),
+            "method": result.get("provider", "unknown"),
+            "keys_used": result.get("keys_used", 0)
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Auto-unseal failed: {result.get('error', 'Unknown error')}"
+        )
 
 
 class CreateVaultKeysFileRequest(BaseModel):
