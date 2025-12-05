@@ -98,3 +98,4 @@ vault-init.json
 
 # Copilot
 .github/copilot-instructions.md
+.llm-context.md
