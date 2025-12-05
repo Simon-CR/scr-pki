@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Unlock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -41,6 +41,7 @@ const SystemSettings: React.FC = () => {
   const [testDiscordLoading, setTestDiscordLoading] = useState(false)
   const [autoUnsealStatus, setAutoUnsealStatus] = useState<AutoUnsealStatusResponse | null>(null)
   const [autoUnsealLoading, setAutoUnsealLoading] = useState(false)
+  const [sealLoading, setSealLoading] = useState(false)
   
   // Seal Configuration State
   const [sealConfig, setSealConfig] = useState<SealConfigResponse | null>(null)
@@ -394,6 +395,30 @@ const SystemSettings: React.FC = () => {
       toast.error(error.response?.data?.detail || 'Auto-unseal failed')
     } finally {
       setAutoUnsealLoading(false)
+    }
+  }
+
+  const handleSealVault = async () => {
+    const confirmed = await confirm({
+      title: 'Seal Vault',
+      message: 'This will seal the Vault. All operations requiring Vault access will fail until it is unsealed again. This is useful for testing auto-unseal methods or for security purposes. Continue?',
+      confirmLabel: 'Seal Vault',
+      variant: 'danger'
+    })
+    if (!confirmed) return
+
+    setSealLoading(true)
+    try {
+      await systemService.sealVault()
+      toast.success('Vault sealed successfully')
+      loadConfig()
+      onCheckHealth(true)
+      // Reload auto-unseal status so user can test it
+      await loadAutoUnsealStatus()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to seal Vault')
+    } finally {
+      setSealLoading(false)
     }
   }
 
@@ -2336,6 +2361,35 @@ const SystemSettings: React.FC = () => {
                               </div>
                             )}
 
+                            {/* Test Auto-Unseal Section - Only show when vault is unsealed and auto-unseal is available */}
+                            {autoUnsealStatus?.available && healthData && !healthData.vault_sealed && (
+                              <div className="p-4 bg-purple-50 border border-purple-200 rounded-md">
+                                <h5 className="text-sm font-medium text-purple-800 mb-2">
+                                  <TestTube className="h-4 w-4 inline mr-1" />
+                                  Test Auto-Unseal
+                                </h5>
+                                <p className="text-xs text-purple-700 mb-3">
+                                  Seal the Vault, then test auto-unseal. Use the priority order above to control which method is tested first.
+                                </p>
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={handleSealVault}
+                                    disabled={sealLoading}
+                                    className="inline-flex items-center px-3 py-1.5 border border-purple-300 text-sm font-medium rounded-md text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50"
+                                  >
+                                    {sealLoading ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin mr-1" />
+                                    ) : (
+                                      <Lock className="h-4 w-4 mr-1" />
+                                    )}
+                                    Seal Vault
+                                  </button>
+                                  <span className="text-xs text-purple-600">→ Then use the Unseal button in System Health above</span>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Add Additional Provider Section - Only show when keys are already stored */}
                             {autoUnsealStatus?.available && autoUnsealStatus.encrypted_keys_stored && (
                               <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
@@ -2556,14 +2610,54 @@ const SystemSettings: React.FC = () => {
                   </div>
                   <div className="sm:col-span-1">
                     <dt className="text-sm font-medium text-gray-500">Vault Status</dt>
-                    <dd className="mt-1 text-sm text-gray-900 flex items-center">
-                      {!healthData.vault_initialized ? (
-                        <><AlertTriangle className="h-5 w-5 text-yellow-500 mr-2" /> Not Initialized</>
-                      ) : healthData.vault_sealed ? (
-                        <><AlertTriangle className="h-5 w-5 text-yellow-500 mr-2" /> Sealed</>
-                      ) : (
-                        <><CheckCircle className="h-5 w-5 text-green-500 mr-2" /> Unsealed</>
-                      )}
+                    <dd className="mt-1 text-sm text-gray-900">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center">
+                          {!healthData.vault_initialized ? (
+                            <><AlertTriangle className="h-5 w-5 text-yellow-500 mr-2" /> Not Initialized</>
+                          ) : healthData.vault_sealed ? (
+                            <><Lock className="h-5 w-5 text-yellow-500 mr-2" /> Sealed</>
+                          ) : (
+                            <><Unlock className="h-5 w-5 text-green-500 mr-2" /> Unsealed</>
+                          )}
+                        </span>
+                        {/* Seal/Unseal buttons */}
+                        {healthData.vault_initialized && healthData.vault_connected && (
+                          <div className="ml-4">
+                            {healthData.vault_sealed ? (
+                              <button
+                                type="button"
+                                onClick={handleAutoUnseal}
+                                disabled={autoUnsealLoading || !autoUnsealStatus?.available}
+                                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-green-700 bg-green-100 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                title={autoUnsealStatus?.available ? 'Unseal Vault' : 'No auto-unseal method available'}
+                              >
+                                {autoUnsealLoading ? (
+                                  <RefreshCw className="h-3 w-3 animate-spin mr-1" />
+                                ) : (
+                                  <Unlock className="h-3 w-3 mr-1" />
+                                )}
+                                Unseal
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleSealVault}
+                                disabled={sealLoading}
+                                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 disabled:opacity-50"
+                                title="Seal Vault for testing or security"
+                              >
+                                {sealLoading ? (
+                                  <RefreshCw className="h-3 w-3 animate-spin mr-1" />
+                                ) : (
+                                  <Lock className="h-3 w-3 mr-1" />
+                                )}
+                                Seal
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </dd>
                   </div>
                   <div className="sm:col-span-1">

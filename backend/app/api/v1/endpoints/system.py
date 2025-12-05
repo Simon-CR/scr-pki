@@ -533,6 +533,33 @@ def unseal_vault(
         )
 
 
+@router.post("/config/vault/seal", status_code=status.HTTP_200_OK)
+def seal_vault(
+    current_user = Depends(require_admin)
+):
+    """
+    Seal Vault. This will require unsealing before Vault can be used again.
+    Useful for testing auto-unseal methods or for security purposes.
+    """
+    try:
+        result = vault_client.seal_vault()
+        if result.get('sealed') is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.get('message', "Failed to seal Vault")
+            )
+        
+        return {"message": "Vault sealed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to seal Vault", error=str(e), error_type=type(e).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to seal Vault: {str(e)}"
+        )
+
+
 class AutoUnsealStatusResponse(BaseModel):
     available: bool
     methods: List[str] = []  # Available methods in priority order

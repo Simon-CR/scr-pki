@@ -209,6 +209,10 @@ export const systemService = {
     return api.post<{ message: string }>('/system/config/vault/unseal', { keys })
   },
 
+  sealVault: async (): Promise<{ message: string }> => {
+    return api.post<{ message: string }>('/system/config/vault/seal', {})
+  },
+
   getAutoUnsealStatus: async (): Promise<AutoUnsealStatusResponse> => {
     return api.get<AutoUnsealStatusResponse>('/system/config/vault/auto-unseal-status')
   },

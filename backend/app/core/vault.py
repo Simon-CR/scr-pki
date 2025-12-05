@@ -421,6 +421,25 @@ class VaultClient:
         result = self.client.sys.initialize(shares, threshold)
         return result
 
+    def seal_vault(self) -> Dict[str, Any]:
+        """
+        Seal Vault. Requires root token or operator permissions.
+        
+        Returns:
+            dict: Seal status with 'sealed' key
+        """
+        if settings.VAULT_DEV_MODE:
+            logger.warning("Cannot seal Vault in dev mode")
+            return {'sealed': False, 'message': 'Cannot seal Vault in dev mode'}
+            
+        try:
+            self.client.sys.seal()
+            logger.info("Vault sealed successfully")
+            return {'sealed': True, 'message': 'Vault sealed successfully'}
+        except Exception as e:
+            logger.error(f"Failed to seal Vault: {e}")
+            raise
+
     def unseal_vault(self, keys: list[str]) -> Dict[str, Any]:
         """
         Unseal Vault using provided keys.

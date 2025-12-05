@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.11] - 2025-12-05
 
 ### Added
+- **Seal/Unseal Buttons**: Added explicit seal and unseal controls for testing and operations
+  - "Seal" button in System Health when Vault is unsealed
+  - "Unseal" button in System Health when Vault is sealed (uses auto-unseal)
+  - New `POST /config/vault/seal` endpoint to seal Vault
+  - New `seal_vault()` method in VaultClient
+- **Test Auto-Unseal Section**: Added a "Test Auto-Unseal" section in the Store Unseal Keys area
+  - Quick access to seal the Vault for testing auto-unseal methods
+  - Instructions to use priority order to control which method is tested first
 - **Remove Provider from Auto-Unseal**: Added ability to remove KMS providers from auto-unseal without deleting their configuration
   - New API endpoint `DELETE /config/vault/auto-unseal-provider` to remove wrapped DEK for a provider
   - "×" button on each active provider badge to remove it from auto-unseal
