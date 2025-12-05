@@ -2314,10 +2314,10 @@ const SystemSettings: React.FC = () => {
                                 </div>
                                 {autoUnsealStatus.methods && autoUnsealStatus.methods.length > 0 && (
                                   <div className="mt-2 flex flex-wrap gap-1">
-                                    {autoUnsealStatus.methods.map((method, idx) => (
+                                    {autoUnsealStatus.methods.map((method: string, idx: number) => (
                                       <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                        {method.method.toUpperCase()}
-                                        {method.available && <CheckCircle className="h-3 w-3 ml-1" />}
+                                        {method.toUpperCase()}
+                                        <CheckCircle className="h-3 w-3 ml-1" />
                                       </span>
                                     ))}
                                   </div>
@@ -2428,7 +2428,7 @@ const SystemSettings: React.FC = () => {
                                 <div className="flex flex-wrap gap-2">
                                   {unsealMethods
                                     .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
-                                    .filter(m => !autoUnsealStatus.methods?.some(am => am.method === m.method))
+                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method))
                                     .map(m => (
                                       <button
                                         key={m.method}

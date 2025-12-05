@@ -42,7 +42,8 @@ export interface VaultInitResponse {
 
 export interface AutoUnsealStatusResponse {
   available: boolean
-  method: string | null
+  methods: string[]  // Available methods in priority order
+  encrypted_keys_stored: boolean
   message: string
 }
 
