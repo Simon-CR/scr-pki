@@ -190,19 +190,8 @@ const SystemSettings: React.FC = () => {
     localStorage.setItem('pki-seal-config-expanded', String(sealConfigExpanded))
   }, [sealConfigExpanded])
 
-  // Restore scroll position on page load
+  // Save scroll position before unload
   useEffect(() => {
-    const savedScrollPos = sessionStorage.getItem('pki-settings-scroll')
-    if (savedScrollPos) {
-      // Use requestAnimationFrame to ensure DOM is ready
-      requestAnimationFrame(() => {
-        window.scrollTo(0, parseInt(savedScrollPos, 10))
-      })
-      // Clear after restoring
-      sessionStorage.removeItem('pki-settings-scroll')
-    }
-
-    // Save scroll position before unload
     const handleBeforeUnload = () => {
       sessionStorage.setItem('pki-settings-scroll', String(window.scrollY))
     }
@@ -212,6 +201,21 @@ const SystemSettings: React.FC = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   }, [])
+
+  // Restore scroll position after content loads
+  useEffect(() => {
+    if (healthData) {
+      const savedScrollPos = sessionStorage.getItem('pki-settings-scroll')
+      if (savedScrollPos) {
+        // Use setTimeout to ensure content has rendered after healthData loads
+        const timer = setTimeout(() => {
+          window.scrollTo(0, parseInt(savedScrollPos, 10))
+          sessionStorage.removeItem('pki-settings-scroll')
+        }, 150)
+        return () => clearTimeout(timer)
+      }
+    }
+  }, [healthData])
 
   useEffect(() => {
     // Check for tab query parameter
