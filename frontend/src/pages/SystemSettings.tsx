@@ -578,7 +578,7 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleRemoveProviderFromAutoUnseal = async (provider: string) => {
-    const providerName = provider === 'local' ? 'Local DEK' :
+    const providerName = provider === 'local' ? 'Database Encryption' :
                          provider === 'ocikms' ? 'OCI KMS' :
                          provider === 'gcpckms' ? 'GCP KMS' :
                          provider === 'awskms' ? 'AWS KMS' :
@@ -590,8 +590,8 @@ const SystemSettings: React.FC = () => {
     const confirmed = await confirm({
       title: isLastProvider ? 'Disable Auto-Unseal' : 'Remove Provider from Auto-Unseal',
       message: isLastProvider 
-        ? `This will remove ${providerName} and DISABLE auto-unseal entirely. You will need to manually enter unseal keys to unseal Vault.\n\nThe provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".`
-        : `This will remove ${providerName} from auto-unseal. The provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".`,
+        ? `This will remove ${providerName} and DISABLE auto-unseal entirely. You will need to manually enter unseal keys to unseal Vault.\n\nThe provider's configuration will NOT be deleted - you can re-add it later using "Add Provider".`
+        : `This will remove ${providerName} from auto-unseal. The provider's configuration will NOT be deleted - you can re-add it later using "Add Provider".`,
       confirmLabel: isLastProvider ? 'Disable Auto-Unseal' : 'Remove Provider',
       variant: 'warning'
     })
@@ -1481,7 +1481,7 @@ const SystemSettings: React.FC = () => {
                               {unsealMethods.map((method, index) => {
                                 const isActive = method.method === activeUnsealMethod
                                 const providerNames: Record<string, string> = {
-                                  'local_file': 'Local Keys File',
+                                  'local_file': 'Database Encryption',
                                   'transit': 'Self-Hosted Transit',
                                   'awskms': 'AWS KMS',
                                   'gcpckms': 'Google Cloud KMS',
@@ -2380,7 +2380,7 @@ const SystemSettings: React.FC = () => {
                                     <div className="flex flex-wrap gap-2">
                                       {autoUnsealStatus.methods.map((method: string, idx: number) => (
                                         <span key={idx} className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                                          {method === 'local' ? 'LOCAL' :
+                                          {method === 'local' ? 'DB ENCRYPT' :
                                            method === 'ocikms' ? 'OCI KMS' :
                                            method === 'gcpckms' ? 'GCP KMS' :
                                            method === 'awskms' ? 'AWS KMS' :
@@ -2394,8 +2394,8 @@ const SystemSettings: React.FC = () => {
                                             disabled={removeDekLoading === method}
                                             className="ml-1.5 text-green-600 hover:text-red-600 focus:outline-none"
                                             title={autoUnsealStatus.methods.length === 1 
-                                              ? `Remove ${method} and disable auto-unseal` 
-                                              : `Remove ${method} from auto-unseal`}
+                                              ? `Remove ${method === 'local' ? 'Database Encryption' : method} and disable auto-unseal` 
+                                              : `Remove ${method === 'local' ? 'Database Encryption' : method} from auto-unseal`}
                                           >
                                             {removeDekLoading === method ? (
                                               <RefreshCw className="h-3 w-3 animate-spin" />
@@ -2441,11 +2441,28 @@ const SystemSettings: React.FC = () => {
                             {/* Add Additional Provider Section - Only show when keys are already stored */}
                             {autoUnsealStatus?.available && autoUnsealStatus.encrypted_keys_stored && (
                               <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
-                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add KMS Provider</h5>
+                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add Provider</h5>
                                 <p className="text-xs text-blue-700 mb-3">
-                                  Add additional KMS providers for redundancy. No need to re-enter keys.
+                                  Add additional providers for redundancy. No need to re-enter keys.
                                 </p>
                                 <div className="flex flex-wrap gap-2">
+                                  {/* Database Encryption (local) option - show if not already active */}
+                                  {!autoUnsealStatus.methods?.includes('local') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleWrapDekWithProvider('local')}
+                                      disabled={wrapDekLoading === 'local'}
+                                      className="inline-flex items-center px-3 py-1.5 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 disabled:opacity-50"
+                                    >
+                                      {wrapDekLoading === 'local' ? (
+                                        <RefreshCw className="animate-spin h-3 w-3 mr-1" />
+                                      ) : (
+                                        <Zap className="h-3 w-3 mr-1" />
+                                      )}
+                                      Add Database Encryption
+                                    </button>
+                                  )}
+                                  {/* KMS providers */}
                                   {unsealMethods
                                     .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
                                     .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
@@ -2469,7 +2486,9 @@ const SystemSettings: React.FC = () => {
                                              m.method.toUpperCase()}
                                       </button>
                                     ))}
-                                  {unsealMethods
+                                  {/* Show "all configured" only if local is also active */}
+                                  {autoUnsealStatus.methods?.includes('local') && 
+                                   unsealMethods
                                     .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
                                     .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
                                     .length === 0 && (

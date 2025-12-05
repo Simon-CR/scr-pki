@@ -803,7 +803,7 @@ def get_unseal_priority(
         configured=local_file_configured,
         enabled=local_file_configured,
         priority=priority,
-        details="Database (local encryption) ✓ Ready" if local_file_configured else "Not configured"
+        details="Database (encrypted) ✓ Ready" if local_file_configured else "Not configured"
     ))
     
     # Add KMS providers
@@ -1081,6 +1081,21 @@ def wrap_dek_with_additional_provider(
         )
     
     provider = request.provider
+    
+    # Special handling for local provider - just store the DEK with local encryption
+    if provider == "local":
+        success = auto_unseal_manager.store_local_dek(db, dek)
+        if success:
+            return {
+                "success": True,
+                "message": "DEK stored with database encryption successfully",
+                "provider": "local"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to store DEK with database encryption"
+            )
     
     # Get the new provider's config
     config = db.query(SystemConfig).filter(
