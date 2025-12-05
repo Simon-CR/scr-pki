@@ -1207,9 +1207,13 @@ def store_unseal_keys_securely(
         )
 
 
+class WrapDekRequest(BaseModel):
+    provider: str
+
+
 @router.post("/config/vault/wrap-dek-with-provider")
 def wrap_dek_with_additional_provider(
-    provider: str,
+    request: WrapDekRequest,
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
 ):
@@ -1257,6 +1261,8 @@ def wrap_dek_with_additional_provider(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No DEK available. Store unseal keys first."
         )
+    
+    provider = request.provider
     
     # Get the new provider's config
     config = db.query(SystemConfig).filter(
