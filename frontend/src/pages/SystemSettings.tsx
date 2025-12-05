@@ -2248,6 +2248,14 @@ const SystemSettings: React.FC = () => {
                               encrypts the keys, and the DEK is wrapped by your configured KMS providers.
                             </p>
 
+                            {/* Loading state */}
+                            {!autoUnsealStatus && (
+                              <div className="p-4 bg-gray-50 rounded-md flex items-center">
+                                <RefreshCw className="animate-spin h-4 w-4 mr-2 text-gray-500" />
+                                <span className="text-sm text-gray-500">Loading auto-unseal status...</span>
+                              </div>
+                            )}
+
                             {/* Current Status - Keys Already Stored */}
                             {autoUnsealStatus && autoUnsealStatus.available && (
                               <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
@@ -2320,7 +2328,7 @@ const SystemSettings: React.FC = () => {
                             )}
 
                             {/* Store Keys Form - Only show if NO keys are stored yet */}
-                            {(!autoUnsealStatus?.available || !autoUnsealStatus.encrypted_keys_stored) && (
+                            {autoUnsealStatus && (!autoUnsealStatus.available || !autoUnsealStatus.encrypted_keys_stored) && (
                               <div className="space-y-4 p-4 bg-gray-50 rounded-md">
                                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
                                   <p className="text-sm text-yellow-800">
