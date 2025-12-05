@@ -44,6 +44,7 @@ export interface AutoUnsealStatusResponse {
   available: boolean
   methods: string[]  // Available methods in priority order
   encrypted_keys_stored: boolean
+  enabled: boolean  // Whether auto-unseal is enabled
   message: string
 }
 
@@ -193,6 +194,10 @@ export const systemService = {
     return api.get<SystemHealthResponse>('/system/health')
   },
 
+  getCachedHealth: async (): Promise<{vault_connected: boolean, vault_initialized: boolean, vault_sealed: boolean, cached_at: string | null}> => {
+    return api.get('/system/health/cached')
+  },
+
   getSystemConfig: async (): Promise<SystemConfigResponse> => {
     return api.get<SystemConfigResponse>('/system/config')
   },
@@ -215,6 +220,10 @@ export const systemService = {
 
   getAutoUnsealStatus: async (): Promise<AutoUnsealStatusResponse> => {
     return api.get<AutoUnsealStatusResponse>('/system/config/vault/auto-unseal-status')
+  },
+
+  toggleAutoUnseal: async (enabled: boolean): Promise<{ success: boolean; enabled: boolean; message: string }> => {
+    return api.post('/system/config/vault/auto-unseal-toggle', { enabled })
   },
 
   autoUnsealVault: async (): Promise<{ message: string; method: string }> => {
@@ -287,13 +296,17 @@ export const systemService = {
   },
 
   // Store Unseal Keys with DEK + KMS wrapping
-  storeUnsealKeys: async (keys: string[], providers: string[]): Promise<{
+  storeUnsealKeys: async (keys: string[], providers: string[], storeLocal: boolean): Promise<{
     message: string;
     keys_stored: number;
     providers_wrapped: string[];
     errors: Record<string, string>;
   }> => {
-    return api.post('/system/config/vault/store-unseal-keys', { keys, wrap_with_providers: providers })
+    return api.post('/system/config/vault/store-unseal-keys', { 
+      keys, 
+      wrap_with_providers: providers.filter(p => p !== 'local'), 
+      store_local: storeLocal 
+    })
   },
 
   // Wrap existing DEK with additional provider

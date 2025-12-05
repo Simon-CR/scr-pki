@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
@@ -9,8 +9,21 @@ import { CheckCircle, XCircle, AlertTriangle, Lock, Unlock, Server, Copy, Trash2
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
+const PROVIDER_NAMES: Record<string, string> = {
+  'local_file': 'Database Encryption',
+  'local': 'Database Encryption',
+  'transit': 'Vault Transit',
+  'awskms': 'AWS KMS',
+  'gcpckms': 'GCP Cloud KMS',
+  'azurekeyvault': 'Azure Key Vault',
+  'ocikms': 'OCI KMS',
+  'alicloudkms': 'AliCloud KMS',
+  'shamir': 'Manual Unseal (Shamir Keys)'
+}
+
 const SystemSettings: React.FC = () => {
   const { confirm } = useConfirmDialog()
+  const [isInitializing, setIsInitializing] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const queryClient = useQueryClient()
   const [healthLoading, setHealthLoading] = useState(false)
@@ -68,10 +81,9 @@ const SystemSettings: React.FC = () => {
   
   // Unseal Priority State
   const [unsealMethods, setUnsealMethods] = useState<UnsealMethodStatus[]>([])
-  const [activeUnsealMethod, setActiveUnsealMethod] = useState<string | null>(null)
+  const [, setActiveUnsealMethod] = useState<string | null>(null)  // Kept for API response but UI uses autoUnsealStatus.methods
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
-  
-
+  const [autoUnsealToggleLoading, setAutoUnsealToggleLoading] = useState(false)
   
   // Store Unseal Keys State (DEK + KMS wrapping)
   const [storeKeysInput, setStoreKeysInput] = useState<string[]>(['', '', '', '', ''])
@@ -190,24 +202,45 @@ const SystemSettings: React.FC = () => {
     localStorage.setItem('pki-seal-config-expanded', String(sealConfigExpanded))
   }, [sealConfigExpanded])
 
-  // Simple scroll position restoration using hash
+  // Track if scroll has been restored to prevent multiple attempts
+  const scrollRestoredRef = useRef(false)
+
+  // Simple scroll position restoration - disable browser's auto restore
   useEffect(() => {
-    // Check if we should restore scroll position
-    const savedPos = sessionStorage.getItem('pki-settings-scroll')
-    if (savedPos && healthData) {
-      // Wait a tick for content to render, then scroll
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          window.scrollTo({ top: parseInt(savedPos, 10), behavior: 'instant' })
-          sessionStorage.removeItem('pki-settings-scroll')
-        })
-      })
+    // Disable browser's automatic scroll restoration
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual'
     }
-  }, [healthData])
+  }, [])
+
+  // Restore scroll position when all critical data is loaded
+  useEffect(() => {
+    if (scrollRestoredRef.current) return
+    
+    const savedPos = sessionStorage.getItem('pki-settings-scroll')
+    if (!savedPos) return
+    
+    // Wait for initialization to complete
+    if (isInitializing) return
+    
+    // Mark as restored to prevent re-attempts
+    scrollRestoredRef.current = true
+    
+    // Use setTimeout to ensure all React renders are complete
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(savedPos, 10), behavior: 'instant' })
+      // Don't remove item so it persists across refreshes
+    }, 0)
+  }, [isInitializing])
 
   // Save scroll position on any navigation away
   useEffect(() => {
     const saveScroll = () => {
+      // Prevent overwriting saved scroll position with 0 before restoration happens
+      // If we haven't restored yet, and there is a saved position, don't save "0" over it
+      if (!scrollRestoredRef.current && sessionStorage.getItem('pki-settings-scroll')) {
+        return
+      }
       sessionStorage.setItem('pki-settings-scroll', String(window.scrollY))
     }
     
@@ -231,13 +264,38 @@ const SystemSettings: React.FC = () => {
     }
 
     const init = async () => {
+      setIsInitializing(true)
+      // Load cached health first for instant UI rendering
+      try {
+        const cached = await systemService.getCachedHealth()
+        if (cached.cached_at) {
+          // We have cached data - set health data immediately for instant UI
+          setHealthData({
+            status: cached.vault_connected ? 'healthy' : 'unhealthy',
+            database_connected: true, // Assume true if we got cached data
+            vault_connected: cached.vault_connected,
+            vault_initialized: cached.vault_initialized,
+            vault_sealed: cached.vault_sealed,
+          } as any)
+        }
+      } catch (e) {
+        console.log('No cached health data available')
+      }
+      
+      // Load config first as it's required for the UI structure
       await loadConfig()
-      // Load other data after config to prioritize the main UI
-      onCheckHealth(true)
+      // Load health (to verify/update cache) and seal config in parallel
+      await Promise.all([
+        onCheckHealth(true),
+        loadSealConfig()
+      ])
+      // Load non-critical data after
       loadBackups()
       loadAlertSettings()
       loadSystemCertificate()
-      loadSealConfig()
+      
+      // All critical data loaded, ready to show UI
+      setIsInitializing(false)
     }
     init()
   }, [])
@@ -530,13 +588,15 @@ const SystemSettings: React.FC = () => {
 
     setStoreKeysLoading(true)
     try {
-      const response = await systemService.storeUnsealKeys(validKeys, storeKeysProviders)
+      const storeLocal = storeKeysProviders.includes('local')
+      const response = await systemService.storeUnsealKeys(validKeys, storeKeysProviders, storeLocal)
       toast.success(response.message)
       
       // Show any provider errors
       if (response.errors && Object.keys(response.errors).length > 0) {
         Object.entries(response.errors).forEach(([provider, error]) => {
-          toast.error(`${provider}: ${error}`, { duration: 5000 })
+          const providerName = PROVIDER_NAMES[provider] || provider.toUpperCase()
+          toast.error(`${providerName}: ${error}`, { duration: 5000 })
         })
       }
       
@@ -553,9 +613,10 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleWrapDekWithProvider = async (provider: string) => {
+    const providerName = PROVIDER_NAMES[provider] || provider.toUpperCase()
     const confirmed = await confirm({
       title: 'Wrap DEK with Provider',
-      message: `This will wrap the existing Data Encryption Key (DEK) with ${provider.toUpperCase()}. This adds redundancy for auto-unseal.`,
+      message: `This will wrap the existing Data Encryption Key (DEK) with ${providerName}. This adds redundancy for auto-unseal.`,
       confirmLabel: 'Wrap DEK',
       variant: 'info'
     })
@@ -565,7 +626,7 @@ const SystemSettings: React.FC = () => {
     try {
       const response = await systemService.wrapDekWithProvider(provider)
       if (response.success) {
-        toast.success(response.message)
+        toast.success(`Successfully wrapped DEK with ${providerName}`)
         await loadAutoUnsealStatus()
       } else {
         toast.error(response.error || 'Failed to wrap DEK')
@@ -578,12 +639,7 @@ const SystemSettings: React.FC = () => {
   }
 
   const handleRemoveProviderFromAutoUnseal = async (provider: string) => {
-    const providerName = provider === 'local' ? 'Database Encryption' :
-                         provider === 'ocikms' ? 'OCI KMS' :
-                         provider === 'gcpckms' ? 'GCP KMS' :
-                         provider === 'awskms' ? 'AWS KMS' :
-                         provider === 'azurekeyvault' ? 'Azure Key Vault' :
-                         provider.toUpperCase()
+    const providerName = PROVIDER_NAMES[provider] || provider.toUpperCase()
 
     const isLastProvider = autoUnsealStatus?.methods?.length === 1
     
@@ -601,13 +657,28 @@ const SystemSettings: React.FC = () => {
     try {
       const response = await systemService.removeProviderFromAutoUnseal(provider)
       if (response.success) {
-        toast.success(isLastProvider ? 'Auto-unseal disabled' : response.message)
+        toast.success(isLastProvider ? 'Auto-unseal disabled' : `Successfully removed ${providerName} from auto-unseal`)
         await loadAutoUnsealStatus()
       }
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Failed to remove provider')
     } finally {
       setRemoveDekLoading(null)
+    }
+  }
+
+  const handleToggleAutoUnseal = async (enabled: boolean) => {
+    setAutoUnsealToggleLoading(true)
+    try {
+      const response = await systemService.toggleAutoUnseal(enabled)
+      if (response.success) {
+        toast.success(response.message)
+        await loadAutoUnsealStatus()
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to toggle auto-unseal')
+    } finally {
+      setAutoUnsealToggleLoading(false)
     }
   }
 
@@ -620,24 +691,26 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
-      // Also load keys file status, priority, and auto-unseal status when loading seal config
-      loadKeysFileStatus()
-      loadUnsealPriority()
-      loadAutoUnsealStatus()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
+    // Always load these regardless of seal config success - they set flags needed for scroll restoration
+    await Promise.all([
+      loadKeysFileStatus(),
+      loadUnsealPriority(),
+      loadAutoUnsealStatus()
+    ])
   }
 
   const handleSaveSealConfig = async () => {
     // Use editingProvider if set (from priority panel), otherwise use sealProvider
     const currentProvider = editingProvider || sealProvider
     const confirmed = await confirm({
-      title: 'Save Auto-Unseal Configuration',
+      title: currentProvider === 'shamir' ? 'Disable Auto-Unseal' : 'Save Auto-Unseal Configuration',
       message: currentProvider === 'shamir' 
         ? 'This will disable auto-unseal. Vault will require manual unsealing after restarts.'
         : 'After saving, you must restart Vault and perform seal migration with your current unseal keys. Continue?',
-      confirmLabel: 'Save Configuration',
+      confirmLabel: currentProvider === 'shamir' ? 'Disable Auto-Unseal' : 'Save Configuration',
       variant: 'warning'
     })
     if (!confirmed) return
@@ -1110,6 +1183,14 @@ const SystemSettings: React.FC = () => {
     window.history.pushState({}, '', url.toString())
   }
 
+  if (isInitializing) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="max-w-3xl mx-auto">
@@ -1437,6 +1518,33 @@ const SystemSettings: React.FC = () => {
                       </div>
                     )}
 
+                    {/* Seal Vault Section - Only show when vault is unsealed */}
+                    {healthData && !healthData.vault_sealed && healthData.vault_initialized && (
+                      <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-md">
+                        <h5 className="text-sm font-medium text-red-800 mb-2">
+                          <Lock className="h-4 w-4 inline mr-1" />
+                          Seal Vault
+                        </h5>
+                        <p className="text-xs text-red-700 mb-3">
+                          Sealing the Vault will make all cryptographic operations unavailable until it is unsealed again.
+                          This is useful for testing auto-unseal or for security purposes.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleSealVault}
+                          disabled={sealLoading}
+                          className="inline-flex items-center px-3 py-1.5 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
+                        >
+                          {sealLoading ? (
+                            <RefreshCw className="h-4 w-4 animate-spin mr-1" />
+                          ) : (
+                            <Lock className="h-4 w-4 mr-1" />
+                          )}
+                          Seal Vault
+                        </button>
+                      </div>
+                    )}
+
                     {/* Auto-Unseal Configuration Section */}
                     <div className="mt-8 border-t border-gray-200 pt-6">
                       <button
@@ -1470,32 +1578,83 @@ const SystemSettings: React.FC = () => {
 
                       {sealConfigExpanded && (
                         <div className="mt-4 space-y-6">
+                          {/* Auto-Unseal Master Toggle */}
+                          <div className={`p-4 rounded-lg border ${
+                            autoUnsealStatus?.enabled 
+                              ? 'bg-green-50 border-green-200' 
+                              : autoUnsealStatus?.available 
+                                ? 'bg-yellow-50 border-yellow-200'
+                                : 'bg-gray-50 border-gray-200'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center">
+                                <div className={`p-2 rounded-full mr-3 ${
+                                  autoUnsealStatus?.enabled 
+                                    ? 'bg-green-100' 
+                                    : autoUnsealStatus?.available 
+                                      ? 'bg-yellow-100'
+                                      : 'bg-gray-100'
+                                }`}>
+                                  {autoUnsealStatus?.enabled ? (
+                                    <Unlock className="h-5 w-5 text-green-600" />
+                                  ) : (
+                                    <Lock className="h-5 w-5 text-gray-500" />
+                                  )}
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-medium text-gray-900">Auto-Unseal</h4>
+                                  <p className="text-xs text-gray-500">
+                                    {autoUnsealStatus?.enabled 
+                                      ? `Enabled with ${autoUnsealStatus.methods?.length || 0} provider${(autoUnsealStatus.methods?.length || 0) !== 1 ? 's' : ''}`
+                                      : autoUnsealStatus?.available 
+                                        ? 'Disabled - Keys stored but auto-unseal is off'
+                                        : 'Not available - Configure providers and store keys first'}
+                                  </p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={autoUnsealStatus?.enabled || false}
+                                  onChange={(e) => handleToggleAutoUnseal(e.target.checked)}
+                                  disabled={!autoUnsealStatus?.available || autoUnsealToggleLoading}
+                                  className="sr-only peer"
+                                />
+                                <div className={`w-11 h-6 rounded-full peer peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 
+                                  ${autoUnsealStatus?.available ? 'bg-gray-200 peer-checked:bg-green-600' : 'bg-gray-300 cursor-not-allowed'}
+                                  peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] 
+                                  after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all`}>
+                                </div>
+                                {autoUnsealToggleLoading && (
+                                  <RefreshCw className="ml-2 h-4 w-4 animate-spin text-gray-500" />
+                                )}
+                              </label>
+                            </div>
+                          </div>
+
                           {/* Priority-Based Method List */}
                           <div>
                             <div className="flex items-center justify-between mb-3">
-                              <h4 className="text-sm font-medium text-gray-900">Unseal Methods (Priority Order)</h4>
-                              <p className="text-xs text-gray-500">First available method will be used</p>
+                              <h4 className="text-sm font-medium text-gray-900">Unseal Methods</h4>
+                              <p className="text-xs text-gray-500">
+                                <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>Active
+                                <span className="inline-block w-2 h-2 rounded-full bg-blue-500 ml-2 mr-1"></span>Ready
+                                <span className="inline-block w-2 h-2 rounded-full bg-gray-300 ml-2 mr-1"></span>Not configured
+                              </p>
                             </div>
                             
                             <div className="space-y-2">
                               {unsealMethods.map((method, index) => {
-                                const isActive = method.method === activeUnsealMethod
-                                const providerNames: Record<string, string> = {
-                                  'local_file': 'Database Encryption',
-                                  'transit': 'Self-Hosted Transit',
-                                  'awskms': 'AWS KMS',
-                                  'gcpckms': 'Google Cloud KMS',
-                                  'azurekeyvault': 'Azure Key Vault',
-                                  'ocikms': 'Oracle OCI KMS',
-                                  'alicloudkms': 'AliCloud KMS',
-                                  'shamir': 'Manual Unseal (Shamir Keys)'
-                                }
+                                // Check if this method is an active provider (has wrapped DEK stored)
+                                // Map local_file to 'local' for comparison with autoUnsealStatus.methods
+                                const normalizedMethod = method.method === 'local_file' ? 'local' : method.method
+                                const isActiveProvider = autoUnsealStatus?.methods?.includes(normalizedMethod) || false
                                 
                                 return (
                                   <div
                                     key={method.method}
                                     className={`flex items-center justify-between p-3 rounded-md border ${
-                                      isActive 
+                                      isActiveProvider 
                                         ? 'bg-green-50 border-green-300' 
                                         : method.configured 
                                           ? 'bg-blue-50 border-blue-200' 
@@ -1532,48 +1691,76 @@ const SystemSettings: React.FC = () => {
                                       <div className="flex-1">
                                         <div className="flex items-center">
                                           <span className="text-sm font-medium text-gray-900">
-                                            {providerNames[method.method] || method.method}
+                                            {PROVIDER_NAMES[method.method] || method.method}
                                           </span>
-                                          {isActive && (
-                                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                              ACTIVE
-                                            </span>
-                                          )}
-                                          {method.configured && !isActive && (
-                                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                                              READY
-                                            </span>
-                                          )}
+                                          {/* Remove ACTIVE/READY badges - color already indicates status */}
                                         </div>
                                         <p className="text-xs text-gray-500">{method.details}</p>
                                       </div>
                                     </div>
                                     
-                                    {/* Configure Button */}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (method.method === 'local_file') {
-                                          setSealProvider('local_file')
-                                          setEditingProvider('local_file')
-                                        } else {
-                                          setSealProvider(method.method as SealProvider)
-                                          setEditingProvider(method.method)
-                                          // Load existing config for this provider
-                                          systemService.getProviderConfig(method.method).then(config => {
-                                            if (config.configured && config.config) {
-                                              setSealFormData(config.config)
-                                            } else {
-                                              setSealFormData({})
-                                            }
-                                          })
-                                        }
-                                      }}
-                                      className="ml-3 inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                                    >
-                                      <Settings className="h-4 w-4 mr-1" />
-                                      {method.configured ? 'Edit' : 'Configure'}
-                                    </button>
+                                    {/* Action Buttons */}
+                                    <div className="flex items-center space-x-2">
+                                      {/* Remove from auto-unseal button - only for active providers */}
+                                      {isActiveProvider && method.method !== 'shamir' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveProviderFromAutoUnseal(normalizedMethod)}
+                                          disabled={removeDekLoading === normalizedMethod}
+                                          className="inline-flex items-center px-2 py-1.5 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
+                                          title="Remove from auto-unseal"
+                                        >
+                                          {removeDekLoading === normalizedMethod ? (
+                                            <RefreshCw className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <XCircle className="h-4 w-4" />
+                                          )}
+                                        </button>
+                                      )}
+                                      
+                                      {/* Add to auto-unseal button - for configured but not active providers */}
+                                      {!isActiveProvider && method.configured && method.method !== 'shamir' && autoUnsealStatus?.encrypted_keys_stored && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleWrapDekWithProvider(normalizedMethod)}
+                                          disabled={wrapDekLoading === normalizedMethod}
+                                          className="inline-flex items-center px-2 py-1.5 border border-green-300 shadow-sm text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 disabled:opacity-50"
+                                          title="Add to auto-unseal"
+                                        >
+                                          {wrapDekLoading === normalizedMethod ? (
+                                            <RefreshCw className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Zap className="h-4 w-4" />
+                                          )}
+                                        </button>
+                                      )}
+                                      
+                                      {/* Configure Button */}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (method.method === 'local_file') {
+                                            setSealProvider('local_file')
+                                            setEditingProvider('local_file')
+                                          } else {
+                                            setSealProvider(method.method as SealProvider)
+                                            setEditingProvider(method.method)
+                                            // Load existing config for this provider
+                                            systemService.getProviderConfig(method.method).then(config => {
+                                              if (config.configured && config.config) {
+                                                setSealFormData(config.config)
+                                              } else {
+                                                setSealFormData({})
+                                              }
+                                            })
+                                          }
+                                        }}
+                                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                                      >
+                                        <Settings className="h-4 w-4 mr-1" />
+                                        {method.configured ? 'Edit' : 'Configure'}
+                                      </button>
+                                    </div>
                                   </div>
                                 )
                               })}
@@ -1589,7 +1776,7 @@ const SystemSettings: React.FC = () => {
                             <div className="border-t pt-4">
                               <div className="flex items-center justify-between mb-4">
                                 <h4 className="text-sm font-medium text-gray-900">
-                                  Configure: {editingProvider === 'local_file' ? 'Local Keys File' : editingProvider.toUpperCase()}
+                                  Configure: {editingProvider === 'local_file' ? 'Local Keys File (Legacy)' : (PROVIDER_NAMES[editingProvider] || editingProvider.toUpperCase())}
                                 </h4>
                                 <button
                                   type="button"
@@ -1603,15 +1790,15 @@ const SystemSettings: React.FC = () => {
                                 </button>
                               </div>
 
-                          {/* Local Keys File Configuration */}
+                          {/* Local Keys File Configuration (Legacy) */}
                           {editingProvider === 'local_file' && (
                             <div className="space-y-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
                               <div className="flex items-start">
                                 <FileKey className="h-5 w-5 text-yellow-600 mt-0.5 mr-2 flex-shrink-0" />
                                 <div>
-                                  <h4 className="text-sm font-medium text-yellow-800">Local Keys File Auto-Unseal</h4>
+                                  <h4 className="text-sm font-medium text-yellow-800">Local Keys File Auto-Unseal (Legacy)</h4>
                                   <p className="mt-1 text-xs text-yellow-700">
-                                    ⚠️ This stores unseal keys on disk. Only use in dev/test or isolated home labs with physical security.
+                                    ⚠️ This stores unseal keys in a plaintext file. Consider using Database Encryption instead for better security.
                                   </p>
                                 </div>
                               </div>
@@ -1643,7 +1830,7 @@ const SystemSettings: React.FC = () => {
                               ) : (
                                 <div className="space-y-3">
                                   <p className="text-sm text-gray-700">
-                                    Enter your unseal keys below to create the local keys file:
+                                    Enter your unseal keys below to create the local keys file (legacy method):
                                   </p>
                                   {localUnsealKeys.map((key, idx) => (
                                     <input
@@ -2190,7 +2377,7 @@ const SystemSettings: React.FC = () => {
                             <button
                               type="button"
                               onClick={handleSaveSealConfig}
-                              disabled={sealConfigLoading}
+                              disabled={sealConfigLoading || (editingProvider === 'shamir' && !autoUnsealStatus?.enabled)}
                               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
                             >
                               {sealConfigLoading ? (
@@ -2198,7 +2385,9 @@ const SystemSettings: React.FC = () => {
                               ) : (
                                 <Save className="h-4 w-4 mr-2" />
                               )}
-                              Save Configuration
+                              {editingProvider === 'shamir' 
+                                ? (autoUnsealStatus?.enabled ? 'Disable Auto-Unseal' : 'Manual Unseal Active')
+                                : 'Save Configuration'}
                             </button>
                             {sealConfig?.configured && sealConfig.enabled && (
                               <button
@@ -2345,163 +2534,9 @@ const SystemSettings: React.FC = () => {
                             </div>
                           )}
 
-                          {/* Store Unseal Keys Section - DEK + KMS wrapping */}
-                          <div className="border-t pt-4">
-                            <div className="flex items-center mb-3">
-                              <Lock className="h-5 w-5 text-green-500 mr-2" />
-                              <h4 className="text-sm font-medium text-gray-900">Secure Auto-Unseal</h4>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-4">
-                              Your Vault unseal keys are encrypted with envelope encryption: a Data Encryption Key (DEK) 
-                              encrypts the keys, and the DEK is wrapped by your configured KMS providers.
-                            </p>
-
-                            {/* Loading state */}
-                            {!autoUnsealStatus && (
-                              <div className="p-4 bg-gray-50 rounded-md flex items-center">
-                                <RefreshCw className="animate-spin h-4 w-4 mr-2 text-gray-500" />
-                                <span className="text-sm text-gray-500">Loading auto-unseal status...</span>
-                              </div>
-                            )}
-
-                            {/* Current Status - Keys Already Stored */}
-                            {autoUnsealStatus && autoUnsealStatus.available && (
-                              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
-                                <div className="flex items-center">
-                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-                                  <div>
-                                    <p className="text-sm font-medium text-green-800">Auto-Unseal Active</p>
-                                    <p className="text-xs text-green-700">{autoUnsealStatus.message}</p>
-                                  </div>
-                                </div>
-                                {autoUnsealStatus.methods && autoUnsealStatus.methods.length > 0 && (
-                                  <div className="mt-3">
-                                    <p className="text-xs text-green-700 mb-2">Active Providers (click × to remove):</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      {autoUnsealStatus.methods.map((method: string, idx: number) => (
-                                        <span key={idx} className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                                          {method === 'local' ? 'DB ENCRYPT' :
-                                           method === 'ocikms' ? 'OCI KMS' :
-                                           method === 'gcpckms' ? 'GCP KMS' :
-                                           method === 'awskms' ? 'AWS KMS' :
-                                           method === 'azurekeyvault' ? 'AZURE' :
-                                           method.toUpperCase()}
-                                          <CheckCircle className="h-3 w-3 ml-1" />
-                                          {/* Remove button - always show (removing last provider disables auto-unseal) */}
-                                          <button
-                                            type="button"
-                                            onClick={() => handleRemoveProviderFromAutoUnseal(method)}
-                                            disabled={removeDekLoading === method}
-                                            className="ml-1.5 text-green-600 hover:text-red-600 focus:outline-none"
-                                            title={autoUnsealStatus.methods.length === 1 
-                                              ? `Remove ${method === 'local' ? 'Database Encryption' : method} and disable auto-unseal` 
-                                              : `Remove ${method === 'local' ? 'Database Encryption' : method} from auto-unseal`}
-                                          >
-                                            {removeDekLoading === method ? (
-                                              <RefreshCw className="h-3 w-3 animate-spin" />
-                                            ) : (
-                                              <XCircle className="h-3 w-3" />
-                                            )}
-                                          </button>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Seal Vault Section - Only show when vault is unsealed */}
-                            {healthData && !healthData.vault_sealed && healthData.vault_initialized && (
-                              <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-                                <h5 className="text-sm font-medium text-red-800 mb-2">
-                                  <Lock className="h-4 w-4 inline mr-1" />
-                                  Seal Vault
-                                </h5>
-                                <p className="text-xs text-red-700 mb-3">
-                                  Sealing the Vault will make all cryptographic operations unavailable until it is unsealed again.
-                                  {autoUnsealStatus?.available && ' You can use the auto-unseal configuration above to unseal after sealing.'}
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={handleSealVault}
-                                  disabled={sealLoading}
-                                  className="inline-flex items-center px-3 py-1.5 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
-                                >
-                                  {sealLoading ? (
-                                    <RefreshCw className="h-4 w-4 animate-spin mr-1" />
-                                  ) : (
-                                    <Lock className="h-4 w-4 mr-1" />
-                                  )}
-                                  Seal Vault
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Add Additional Provider Section - Only show when keys are already stored */}
-                            {autoUnsealStatus?.available && autoUnsealStatus.encrypted_keys_stored && (
-                              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
-                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add Provider</h5>
-                                <p className="text-xs text-blue-700 mb-3">
-                                  Add additional providers for redundancy. No need to re-enter keys.
-                                </p>
-                                <div className="flex flex-wrap gap-2">
-                                  {/* Database Encryption (local) option - show if not already active */}
-                                  {!autoUnsealStatus.methods?.includes('local') && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleWrapDekWithProvider('local')}
-                                      disabled={wrapDekLoading === 'local'}
-                                      className="inline-flex items-center px-3 py-1.5 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 disabled:opacity-50"
-                                    >
-                                      {wrapDekLoading === 'local' ? (
-                                        <RefreshCw className="animate-spin h-3 w-3 mr-1" />
-                                      ) : (
-                                        <Zap className="h-3 w-3 mr-1" />
-                                      )}
-                                      Add Database Encryption
-                                    </button>
-                                  )}
-                                  {/* KMS providers */}
-                                  {unsealMethods
-                                    .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
-                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
-                                    .map(m => (
-                                      <button
-                                        key={m.method}
-                                        type="button"
-                                        onClick={() => handleWrapDekWithProvider(m.method)}
-                                        disabled={wrapDekLoading === m.method}
-                                        className="inline-flex items-center px-3 py-1.5 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 disabled:opacity-50"
-                                      >
-                                        {wrapDekLoading === m.method ? (
-                                          <RefreshCw className="animate-spin h-3 w-3 mr-1" />
-                                        ) : (
-                                          <Zap className="h-3 w-3 mr-1" />
-                                        )}
-                                        Add {m.method === 'ocikms' ? 'OCI KMS' :
-                                             m.method === 'gcpckms' ? 'GCP KMS' :
-                                             m.method === 'awskms' ? 'AWS KMS' :
-                                             m.method === 'azurekeyvault' ? 'Azure' :
-                                             m.method.toUpperCase()}
-                                      </button>
-                                    ))}
-                                  {/* Show "all configured" only if local is also active */}
-                                  {autoUnsealStatus.methods?.includes('local') && 
-                                   unsealMethods
-                                    .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
-                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
-                                    .length === 0 && (
-                                      <p className="text-xs text-blue-600">
-                                        All configured providers are already wrapping the DEK ✓
-                                      </p>
-                                    )}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Store Keys Form - Only show if NO keys are stored yet */}
-                            {autoUnsealStatus && (!autoUnsealStatus.available || !autoUnsealStatus.encrypted_keys_stored) && (
+                          {/* Store Unseal Keys Section - Only show if NO keys are stored yet */}
+                          {autoUnsealStatus && (!autoUnsealStatus.available || !autoUnsealStatus.encrypted_keys_stored) && (
+                            <div className="border-t pt-4">
                               <div className="space-y-4 p-4 bg-gray-50 rounded-md">
                                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
                                   <p className="text-sm text-yellow-800">
@@ -2552,7 +2587,7 @@ const SystemSettings: React.FC = () => {
                                         }}
                                         className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                                       />
-                                      <span className="ml-2 text-sm text-gray-700">Local (Fernet) - Always recommended as fallback</span>
+                                      <span className="ml-2 text-sm text-gray-700">Database Encryption - Always recommended as fallback</span>
                                     </label>
                                     {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').map(m => (
                                       <label key={m.method} className="flex items-center">
@@ -2569,12 +2604,7 @@ const SystemSettings: React.FC = () => {
                                           className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
                                         />
                                         <span className="ml-2 text-sm text-gray-700">
-                                          {m.method === 'ocikms' ? 'OCI KMS' :
-                                           m.method === 'gcpckms' ? 'GCP Cloud KMS' :
-                                           m.method === 'awskms' ? 'AWS KMS' :
-                                           m.method === 'azurekeyvault' ? 'Azure Key Vault' :
-                                           m.method === 'transit' ? 'Vault Transit' :
-                                           m.method.toUpperCase()}
+                                          {PROVIDER_NAMES[m.method] || m.method.toUpperCase()}
                                         </span>
                                       </label>
                                     ))}
@@ -2603,8 +2633,8 @@ const SystemSettings: React.FC = () => {
                                   </button>
                                 </div>
                               </div>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

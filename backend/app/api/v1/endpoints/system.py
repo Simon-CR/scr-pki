@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from enum import Enum
 import httpx
+import json
 import structlog
 import os
 import time
@@ -320,6 +321,72 @@ class SystemHealthResponse(BaseModel):
     total_cas: int
     missing_keys: List[str] = []
     orphaned_keys: List[str] = []
+    cached: bool = False  # True if this is cached data
+
+class CachedVaultStatus(BaseModel):
+    vault_connected: bool
+    vault_initialized: bool
+    vault_sealed: bool
+    last_updated: Optional[str] = None
+
+def get_cached_vault_status(db: Session) -> Optional[CachedVaultStatus]:
+    """Get cached vault status from database"""
+    from app.models.monitoring import SystemConfig
+    config = db.query(SystemConfig).filter(SystemConfig.key == "cached_vault_status").first()
+    if config:
+        try:
+            data = json.loads(config.value)
+            return CachedVaultStatus(**data)
+        except:
+            pass
+    return None
+
+def save_cached_vault_status(db: Session, status: CachedVaultStatus):
+    """Save vault status to database cache"""
+    from app.models.monitoring import SystemConfig
+    from datetime import datetime
+    config = db.query(SystemConfig).filter(SystemConfig.key == "cached_vault_status").first()
+    data = {
+        "vault_connected": status.vault_connected,
+        "vault_initialized": status.vault_initialized,
+        "vault_sealed": status.vault_sealed,
+        "last_updated": datetime.utcnow().isoformat()
+    }
+    if config:
+        config.value = json.dumps(data)
+    else:
+        db.add(SystemConfig(key="cached_vault_status", value=json.dumps(data)))
+    db.commit()
+
+@router.get("/health/quick", response_model=SystemHealthResponse)
+def get_quick_health(
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Get quick health status using cached vault status. 
+    Returns immediately without waiting for vault health check.
+    Use /health for full verification.
+    """
+    from app.models.certificate import Certificate
+    from app.models.ca import CertificateAuthority
+    
+    # Get cached vault status
+    cached = get_cached_vault_status(db)
+    
+    health = SystemHealthResponse(
+        database_connected=True,
+        vault_connected=cached.vault_connected if cached else False,
+        vault_initialized=cached.vault_initialized if cached else False,
+        vault_sealed=cached.vault_sealed if cached else True,
+        total_certificates=db.query(Certificate).count(),
+        total_cas=db.query(CertificateAuthority).count(),
+        missing_keys=[],
+        orphaned_keys=[],
+        cached=True
+    )
+    
+    return health
 
 @router.get("/health", response_model=SystemHealthResponse)
 @limiter.limit(RATE_LIMITS["health"])
@@ -350,6 +417,13 @@ def check_system_health(
         health.vault_connected = vault_status.get('authenticated', False)
         health.vault_initialized = vault_status.get('initialized', False)
         health.vault_sealed = vault_status.get('sealed', True)
+        
+        # Cache the vault status for quick access
+        save_cached_vault_status(db, CachedVaultStatus(
+            vault_connected=health.vault_connected,
+            vault_initialized=health.vault_initialized,
+            vault_sealed=health.vault_sealed
+        ))
     except Exception as e:
         logger.error("Health check failed to contact Vault", error=str(e))
     
@@ -567,6 +641,7 @@ class AutoUnsealStatusResponse(BaseModel):
     available: bool
     methods: List[str] = []  # Available methods in priority order
     encrypted_keys_stored: bool = False
+    enabled: bool = False  # Whether auto-unseal is enabled
     message: str
 
 
@@ -586,6 +661,10 @@ def get_auto_unseal_status(
     
     methods = []
     encrypted_keys_stored = False
+    
+    # Check if auto-unseal is enabled
+    enabled_config = db.query(SystemConfig).filter(SystemConfig.key == "auto_unseal_enabled").first()
+    auto_unseal_enabled = bool(enabled_config and enabled_config.value == "true")
     
     # Check if we have encrypted unseal keys stored
     encrypted_keys = auto_unseal_manager.get_encrypted_keys(db)
@@ -623,19 +702,70 @@ def get_auto_unseal_status(
             'ocikms': 'Oracle OCI KMS',
         }
         method_names = [provider_names.get(m, m) for m in methods]
+        status_msg = f"Auto-unseal {'enabled' if auto_unseal_enabled else 'disabled'}. Providers: {', '.join(method_names)}"
         return AutoUnsealStatusResponse(
             available=True,
             methods=methods,
             encrypted_keys_stored=encrypted_keys_stored,
-            message=f"Auto-unseal available via: {', '.join(method_names)}"
+            enabled=auto_unseal_enabled,
+            message=status_msg
         )
     
     return AutoUnsealStatusResponse(
         available=False,
         methods=[],
         encrypted_keys_stored=False,
-        message="No auto-unseal method available. Initialize Vault with key storage enabled or configure KMS."
+        enabled=False,
+        message="No auto-unseal method available. Configure a provider and store keys to enable."
     )
+
+
+class AutoUnsealToggleRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/config/vault/auto-unseal-toggle")
+def toggle_auto_unseal(
+    request: AutoUnsealToggleRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Enable or disable auto-unseal.
+    Auto-unseal can only be enabled if there are providers configured with stored keys.
+    """
+    from app.core.auto_unseal import auto_unseal_manager
+    
+    # Check if we can enable auto-unseal
+    if request.enabled:
+        encrypted_keys = auto_unseal_manager.get_encrypted_keys(db)
+        available_providers = auto_unseal_manager.get_available_providers(db)
+        
+        if not encrypted_keys or not available_providers:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot enable auto-unseal: no providers configured with stored keys"
+            )
+    
+    # Store the enabled state
+    config = db.query(SystemConfig).filter(SystemConfig.key == "auto_unseal_enabled").first()
+    if config:
+        config.value = "true" if request.enabled else "false"
+    else:
+        config = SystemConfig(
+            key="auto_unseal_enabled",
+            value="true" if request.enabled else "false",
+            description="Whether auto-unseal is enabled"
+        )
+        db.add(config)
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "enabled": request.enabled,
+        "message": f"Auto-unseal {'enabled' if request.enabled else 'disabled'}"
+    }
 
 
 class AutoUnsealRequest(BaseModel):
@@ -749,7 +879,9 @@ def get_unseal_priority(
     auto_unseal_providers = auto_unseal_manager.get_available_providers(db)
     
     # Check if local DEK exists (local_file = envelope encryption with local Fernet)
-    local_file_configured = 'local' in auto_unseal_providers
+    # Local file is always "configured" as it requires no external credentials
+    local_file_configured = True
+    local_file_active = 'local' in auto_unseal_providers
     
     # Get priority order from database (or use default)
     priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
@@ -801,7 +933,7 @@ def get_unseal_priority(
     methods.append(UnsealMethodStatus(
         method="local_file",
         configured=local_file_configured,
-        enabled=local_file_configured,
+        enabled=local_file_active,
         priority=priority,
         details="Database (encrypted) ✓ Ready" if local_file_configured else "Not configured"
     ))
@@ -928,7 +1060,7 @@ class StoreUnsealKeysRequest(BaseModel):
     """Request to securely store unseal keys"""
     keys: List[str]  # The unseal keys to store
     wrap_with_providers: List[str] = []  # KMS providers to wrap DEK with
-    store_local: bool = True  # Also store with local encryption
+    store_local: bool = False  # Also store with local encryption (Database Encryption)
 
 
 class StoreUnsealKeysResponse(BaseModel):
@@ -955,6 +1087,7 @@ def store_unseal_keys_securely(
     configured KMS providers or local encryption.
     """
     from app.core.auto_unseal import auto_unseal_manager
+    from app.core.security import decrypt_value
     
     if not request.keys or len(request.keys) == 0:
         raise HTTPException(
@@ -3052,6 +3185,7 @@ def initialize_vault(
     - KMS-wrapped DEK for production use with cloud providers
     """
     from app.core.auto_unseal import auto_unseal_manager
+    from app.core.security import decrypt_value
     
     try:
         # 1. Initialize Vault

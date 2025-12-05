@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clearer indication that clicking × removes a provider
   - Shows provider count and allows removal when more than one exists
   - Loading spinner when removal is in progress
+- **Provider Names**: Updated UI to use friendly names (e.g., "GCP Cloud KMS" instead of "gcpckms") in all notifications and labels.
+- **Configuration UX**: Improved "Save Configuration" button to clearly indicate "Disable Auto-Unseal" when switching to manual mode.
+- **Documentation**: Cleaned up README and consolidated deployment instructions.
 
 ## [0.2.10] - 2025-12-04
 

@@ -23,6 +23,12 @@ SCR-PKI provides a complete solution for managing SSL/TLS certificates in your h
 - Certificate revocation and renewal workflows
 - Track certificate deployment locations
 
+### System Administration
+- **Auto-Unseal**: Configure Vault auto-unseal using Cloud KMS (AWS, GCP, Azure, OCI, AliCloud) or local keys.
+- **Backups**: Create, download, and restore full system backups (database + configuration).
+- **Alerts**: Configure email (SMTP), Slack, and Discord notifications for certificate expiration and system health.
+- **System Settings**: Manage Vault connection, system certificates, and unseal priorities from the UI.
+
 ### Monitoring & Alerts
 - Automated health checks for services using issued certificates
 - Customizable monitoring intervals
@@ -79,25 +85,6 @@ To run in development mode (with hot-reloading, local builds, and exposed ports)
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 ```
-
-## 📚 Documentation
-git clone <repository-url>
-cd pki
-
-# Copy environment configuration
-cp .env.example .env
-
-# Edit .env with your settings
-nano .env
-
-# Start the platform
-docker compose up -d
-
-# Access the web interface
-open https://localhost
-```
-
-See [GETTING_STARTED.md](docs/GETTING_STARTED.md) for detailed setup instructions.
 
 ## 📋 Prerequisites
 
