@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
@@ -25,7 +25,7 @@ const SystemSettings: React.FC = () => {
   const [restoreLoading, setRestoreLoading] = useState<string | null>(null) // Filename being restored
   const [showRestoreModal, setShowRestoreModal] = useState(false)
   const [restoreFilename, setRestoreFilename] = useState<string | null>(null)
-  const [unsealKeys, setUnsealKeys] = useState<string[]>(['', '', ''])
+  const [unsealKeys, setUnsealKeys] = useState<string[]>(['', '', '', '', ''])
   const [restoreRootToken, setRestoreRootToken] = useState('')
   const [restoreApp, setRestoreApp] = useState(true)
   const [restoreVault, setRestoreVault] = useState(true)
@@ -59,12 +59,12 @@ const SystemSettings: React.FC = () => {
   // Local Keys File State
   const [keysFileStatus, setKeysFileStatus] = useState<KeysFileStatus | null>(null)
   const [keysFileLoading, setKeysFileLoading] = useState(false)
-  const [localUnsealKeys, setLocalUnsealKeys] = useState<string[]>(['', '', ''])
+  const [localUnsealKeys, setLocalUnsealKeys] = useState<string[]>(['', '', '', '', ''])
   
   // Seal Migration State
   const [migrationLoading, setMigrationLoading] = useState(false)
   const [migrationResult, setMigrationResult] = useState<SealMigrationResponse | null>(null)
-  const [migrationUnsealKeys, setMigrationUnsealKeys] = useState<string[]>(['', '', ''])
+  const [migrationUnsealKeys, setMigrationUnsealKeys] = useState<string[]>(['', '', '', '', ''])
   
   // Unseal Priority State
   const [unsealMethods, setUnsealMethods] = useState<UnsealMethodStatus[]>([])
@@ -190,42 +190,35 @@ const SystemSettings: React.FC = () => {
     localStorage.setItem('pki-seal-config-expanded', String(sealConfigExpanded))
   }, [sealConfigExpanded])
 
-  // Scroll position restoration - use ref to track if we've restored
-  const scrollRestoredRef = useRef(false)
-  const savedScrollRef = useRef<number | null>(null)
-  
-  // Capture scroll position on mount (before any async operations)
-  useLayoutEffect(() => {
-    // Disable browser's automatic scroll restoration
-    if ('scrollRestoration' in history) {
-      history.scrollRestoration = 'manual'
-    }
-    
+  // Simple scroll position restoration using hash
+  useEffect(() => {
+    // Check if we should restore scroll position
     const savedPos = sessionStorage.getItem('pki-settings-scroll')
-    if (savedPos) {
-      savedScrollRef.current = parseInt(savedPos, 10)
-      sessionStorage.removeItem('pki-settings-scroll')
-    }
-  }, [])
-  
-  // Restore scroll position immediately when healthData loads (content is ready)
-  useLayoutEffect(() => {
-    if (healthData && savedScrollRef.current !== null && !scrollRestoredRef.current) {
-      window.scrollTo(0, savedScrollRef.current)
-      scrollRestoredRef.current = true
-      savedScrollRef.current = null
+    if (savedPos && healthData) {
+      // Wait a tick for content to render, then scroll
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo({ top: parseInt(savedPos, 10), behavior: 'instant' })
+          sessionStorage.removeItem('pki-settings-scroll')
+        })
+      })
     }
   }, [healthData])
 
-  // Save scroll position before unload
+  // Save scroll position on any navigation away
   useEffect(() => {
-    const handleBeforeUnload = () => {
+    const saveScroll = () => {
       sessionStorage.setItem('pki-settings-scroll', String(window.scrollY))
     }
-    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    // Save before page unload (refresh)
+    window.addEventListener('beforeunload', saveScroll)
+    // Save periodically while on page (in case of soft navigation)
+    const interval = setInterval(saveScroll, 1000)
     
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('beforeunload', saveScroll)
+      clearInterval(interval)
     }
   }, [])
 
@@ -405,7 +398,7 @@ const SystemSettings: React.FC = () => {
     try {
       await systemService.unsealVault(validKeys)
       toast.success('Vault unsealed successfully!')
-      setUnsealKeys(['', '', ''])
+      setUnsealKeys(['', '', '', '', ''])
       loadConfig()
       onCheckHealth(true)
     } catch (error: any) {
@@ -822,7 +815,7 @@ const SystemSettings: React.FC = () => {
     try {
       const result = await systemService.createKeysFile(validKeys)
       toast.success(result.message)
-      setLocalUnsealKeys(['', '', ''])
+      setLocalUnsealKeys(['', '', '', '', ''])
       loadKeysFileStatus()
       loadAutoUnsealStatus()
     } catch (error: any) {
@@ -1006,7 +999,7 @@ const SystemSettings: React.FC = () => {
 
   const handleRestoreBackup = (filename: string) => {
     setRestoreFilename(filename)
-    setUnsealKeys(['', '', ''])
+    setUnsealKeys(['', '', '', '', ''])
     setRestoreRootToken('')
     setRestoreApp(true)
     setRestoreVault(true)
@@ -1302,21 +1295,26 @@ const SystemSettings: React.FC = () => {
                             <div className="mt-4">
                               <label className="block text-sm font-medium text-yellow-800 mb-1">
                                 {autoUnsealStatus?.available ? 'Or enter keys manually:' : 'Unseal Keys'}
+                                <span className="font-normal text-yellow-600 ml-1">(minimum 3 required)</span>
                               </label>
                                 {unsealKeys.map((key, idx) => (
-                                  <input
-                                    key={idx}
-                                    type="password"
-                                    className="mt-1 shadow-sm focus:ring-yellow-500 focus:border-yellow-500 block w-full sm:text-sm border-yellow-300 rounded-md mb-2"
-                                    placeholder={`Unseal Key ${idx + 1}`}
-                                    value={key}
-                                    onChange={(e) => {
-                                      const newKeys = [...unsealKeys]
-                                      newKeys[idx] = e.target.value
-                                      setUnsealKeys(newKeys)
-                                    }}
-                                  />
-                                ))}
+                                  <div key={idx} className="relative">
+                                    <input
+                                      type="password"
+                                      className="mt-1 shadow-sm focus:ring-yellow-500 focus:border-yellow-500 block w-full sm:text-sm border-yellow-300 rounded-md mb-2 pr-16"
+                                      placeholder={`Unseal Key ${idx + 1}${idx >= 3 ? ' (optional)' : ''}`}
+                                      value={key}
+                                      onChange={(e) => {
+                                        const newKeys = [...unsealKeys]
+                                        newKeys[idx] = e.target.value
+                                        setUnsealKeys(newKeys)
+                                      }}
+                                    />
+                                    {idx >= 3 && (
+                                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-yellow-500">optional</span>
+                                    )}
+                                  </div>
+                                ))}}
                                 <button
                                     type="button"
                                     onClick={handleUnsealVault}
