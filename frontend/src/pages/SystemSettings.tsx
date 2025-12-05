@@ -576,10 +576,14 @@ const SystemSettings: React.FC = () => {
                          provider === 'azurekeyvault' ? 'Azure Key Vault' :
                          provider.toUpperCase()
 
+    const isLastProvider = autoUnsealStatus?.methods?.length === 1
+    
     const confirmed = await confirm({
-      title: 'Remove Provider from Auto-Unseal',
-      message: `This will remove ${providerName} from auto-unseal. The provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".\n\nNote: At least one provider must remain for auto-unseal to work.`,
-      confirmLabel: 'Remove Provider',
+      title: isLastProvider ? 'Disable Auto-Unseal' : 'Remove Provider from Auto-Unseal',
+      message: isLastProvider 
+        ? `This will remove ${providerName} and DISABLE auto-unseal entirely. You will need to manually enter unseal keys to unseal Vault.\n\nThe provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".`
+        : `This will remove ${providerName} from auto-unseal. The provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".`,
+      confirmLabel: isLastProvider ? 'Disable Auto-Unseal' : 'Remove Provider',
       variant: 'warning'
     })
     if (!confirmed) return
@@ -588,7 +592,7 @@ const SystemSettings: React.FC = () => {
     try {
       const response = await systemService.removeProviderFromAutoUnseal(provider)
       if (response.success) {
-        toast.success(response.message)
+        toast.success(isLastProvider ? 'Auto-unseal disabled' : response.message)
         await loadAutoUnsealStatus()
       }
     } catch (error: any) {
@@ -2369,22 +2373,22 @@ const SystemSettings: React.FC = () => {
                                            method === 'azurekeyvault' ? 'AZURE' :
                                            method.toUpperCase()}
                                           <CheckCircle className="h-3 w-3 ml-1" />
-                                          {/* Remove button - only show if more than 1 provider */}
-                                          {autoUnsealStatus.methods.length > 1 && (
-                                            <button
-                                              type="button"
-                                              onClick={() => handleRemoveProviderFromAutoUnseal(method)}
-                                              disabled={removeDekLoading === method}
-                                              className="ml-1.5 text-green-600 hover:text-red-600 focus:outline-none"
-                                              title={`Remove ${method} from auto-unseal`}
-                                            >
-                                              {removeDekLoading === method ? (
-                                                <RefreshCw className="h-3 w-3 animate-spin" />
-                                              ) : (
-                                                <XCircle className="h-3 w-3" />
-                                              )}
-                                            </button>
-                                          )}
+                                          {/* Remove button - always show (removing last provider disables auto-unseal) */}
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveProviderFromAutoUnseal(method)}
+                                            disabled={removeDekLoading === method}
+                                            className="ml-1.5 text-green-600 hover:text-red-600 focus:outline-none"
+                                            title={autoUnsealStatus.methods.length === 1 
+                                              ? `Remove ${method} and disable auto-unseal` 
+                                              : `Remove ${method} from auto-unseal`}
+                                          >
+                                            {removeDekLoading === method ? (
+                                              <RefreshCw className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                              <XCircle className="h-3 w-3" />
+                                            )}
+                                          </button>
                                         </span>
                                       ))}
                                     </div>

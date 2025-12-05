@@ -1178,13 +1178,8 @@ def remove_provider_from_auto_unseal(
             detail=f"Invalid provider: {provider}. Valid providers: {', '.join(valid_providers)}"
         )
     
-    # Check that at least one other provider remains
-    available = auto_unseal_manager.get_available_providers(db)
-    if provider in available and len(available) <= 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove the last provider. At least one provider must remain for auto-unseal to work."
-        )
+    # Note: We allow removing the last provider - this disables auto-unseal
+    # and the user will need to use manual key entry
     
     success, message = auto_unseal_manager.remove_provider_from_auto_unseal(db, provider)
     
