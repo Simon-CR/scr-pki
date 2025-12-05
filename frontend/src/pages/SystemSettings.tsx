@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import { systemService, SystemCertRequest, SystemHealthResponse, SystemConfigResponse, VaultInitResponse, Backup, AutoUnsealStatusResponse, SealConfigResponse, SealConfigRequest, SealProvider, KeysFileStatus, SealMigrationResponse, UnsealMethodStatus } from '../services/systemService'
 import { AlertSettings } from '../types'
 import LoadingSpinner from '../components/LoadingSpinner'
-import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Archive, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings, ArrowRight } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Lock, Server, Copy, Trash2, Download, Upload, RefreshCw, Save, Bell, Zap, Shield, ChevronDown, ChevronUp, TestTube, FileKey, Settings } from 'lucide-react'
 import { tokenStorage } from '../utils/tokenStorage'
 import { useConfirmDialog } from '../components/ConfirmDialog'
 
@@ -66,12 +66,7 @@ const SystemSettings: React.FC = () => {
   const [activeUnsealMethod, setActiveUnsealMethod] = useState<string | null>(null)
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
   
-  // Key Replication State
-  const [replicationSource, setReplicationSource] = useState<'local_file' | 'manual'>('local_file')
-  const [replicationDestination, setReplicationDestination] = useState<string>('')
-  const [replicationKeys, setReplicationKeys] = useState<string[]>(['', '', ''])
-  const [replicationLoading, setReplicationLoading] = useState(false)
-  const [replicationStatus, setReplicationStatus] = useState<{ has_local_keys: boolean; local_key_count: number; replications: Array<{ destination: string; replicated_at?: string; status: string }> } | null>(null)
+
   
   // Store Unseal Keys State (DEK + KMS wrapping)
   const [storeKeysInput, setStoreKeysInput] = useState<string[]>(['', '', '', '', ''])
@@ -450,52 +445,6 @@ const SystemSettings: React.FC = () => {
     }
   }
 
-  // Key Replication Functions
-  const loadReplicationStatus = async () => {
-    try {
-      const status = await systemService.getReplicationStatus()
-      setReplicationStatus(status)
-    } catch (error) {
-      console.error('Failed to load replication status', error)
-    }
-  }
-
-  const handleReplicateKeys = async () => {
-    if (!replicationDestination) {
-      toast.error('Please select a destination')
-      return
-    }
-
-    // If manual source, validate keys
-    if (replicationSource === 'manual') {
-      const validKeys = replicationKeys.filter(k => k.trim() !== '')
-      if (validKeys.length === 0) {
-        toast.error('Please enter at least one unseal key')
-        return
-      }
-    }
-
-    setReplicationLoading(true)
-    try {
-      const response = await systemService.replicateKeys({
-        source: replicationSource,
-        source_keys: replicationSource === 'manual' ? replicationKeys.filter(k => k.trim() !== '') : undefined,
-        destination: replicationDestination
-      })
-
-      if (response.success) {
-        toast.success(response.message)
-        await loadReplicationStatus()
-      } else {
-        toast.error(response.message)
-      }
-    } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to replicate keys')
-    } finally {
-      setReplicationLoading(false)
-    }
-  }
-
   // Store Unseal Keys Functions (DEK + KMS wrapping)
   const handleStoreUnsealKeys = async () => {
     const validKeys = storeKeysInput.filter(k => k.trim() !== '')
@@ -526,7 +475,6 @@ const SystemSettings: React.FC = () => {
       
       // Reload status
       await loadAutoUnsealStatus()
-      await loadReplicationStatus()
       
       // Clear the input
       setStoreKeysInput(['', '', '', '', ''])
@@ -552,7 +500,6 @@ const SystemSettings: React.FC = () => {
       if (response.success) {
         toast.success(response.message)
         await loadAutoUnsealStatus()
-        await loadReplicationStatus()
       } else {
         toast.error(response.error || 'Failed to wrap DEK')
       }
@@ -572,10 +519,9 @@ const SystemSettings: React.FC = () => {
         setSealProvider(config.provider as SealProvider)
         setSealFormData(config.details)
       }
-      // Also load keys file status, priority, and replication when loading seal config
+      // Also load keys file status and priority when loading seal config
       loadKeysFileStatus()
       loadUnsealPriority()
-      loadReplicationStatus()
     } catch (error) {
       console.error('Failed to load seal config', error)
     }
