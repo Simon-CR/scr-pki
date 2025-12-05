@@ -1102,25 +1102,26 @@ def get_unseal_priority(
     # This should be the method that will be used when auto-unseal is triggered
     active_method = None
     
-    # Check if local DEK is available (can auto-unseal with 'local')
-    local_dek_available = 'local' in auto_unseal_providers
-    
+    # Map display names to internal provider names for auto_unseal_providers
+    # 'local' in auto_unseal_providers corresponds to 'local_file' in the UI
     for method in methods:
-        if method.method == "local_file" and local_file_configured:
-            active_method = "local_file"
-            break
-        elif method.method == "shamir":
-            # Shamir is always available as fallback but requires manual input
-            if active_method is None:
-                active_method = "shamir"
-            break
+        if method.method == "shamir":
+            # Shamir is manual - not an auto-unseal method
+            continue
+        
+        # Check if this method has a wrapped DEK and can auto-unseal
+        if method.method == "local_file":
+            # local_file in UI corresponds to 'local' in auto_unseal_providers
+            if 'local' in auto_unseal_providers:
+                active_method = "local_file"
+                break
         elif method.method in auto_unseal_providers:
             active_method = method.method
             break
-        elif method.method == "local_file" and local_dek_available:
-            # If local DEK is stored (not local_file), it counts as local
-            active_method = "local"
-            break
+    
+    # If no auto-unseal method available, fall back to shamir
+    if active_method is None:
+        active_method = "shamir"
     
     return UnsealPriorityResponse(
         methods=methods,
