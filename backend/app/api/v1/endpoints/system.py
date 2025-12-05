@@ -602,12 +602,12 @@ def get_auto_unseal_status(
         else:
             priority_order = ["local", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
         
-        # Return providers in priority order
+        # Return providers in priority order (normalized names)
         for provider in priority_order:
-            # Map local_file to local
-            check_provider = "local" if provider == "local_file" else provider
-            if check_provider in available_providers:
-                methods.append(provider)
+            # Map local_file to local (normalized name)
+            normalized_provider = "local" if provider == "local_file" else provider
+            if normalized_provider in available_providers and normalized_provider not in methods:
+                methods.append(normalized_provider)
     
     if methods:
         provider_names = {

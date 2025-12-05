@@ -1073,7 +1073,7 @@ class AutoUnsealKeyManager:
                 for method in db_priority:
                     if method == "local_file":
                         priority_order.append("local")
-                    elif method in ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]:
+                    elif method in ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]:
                         priority_order.append(method)
                 # Ensure all available providers are in the list
                 for p in providers:
