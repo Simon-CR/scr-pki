@@ -2514,18 +2514,22 @@ const SystemSettings: React.FC = () => {
                                   <p className="text-xs text-gray-500 mb-2">Enter all 5 unseal keys from your Vault initialization</p>
                                   <div className="space-y-2">
                                     {storeKeysInput.map((key, idx) => (
-                                      <input
-                                        key={idx}
-                                        type="password"
-                                        value={key}
-                                        onChange={(e) => {
-                                          const newKeys = [...storeKeysInput]
-                                          newKeys[idx] = e.target.value
-                                          setStoreKeysInput(newKeys)
-                                        }}
-                                        placeholder={`Unseal Key ${idx + 1}`}
-                                        className="w-full px-3 py-2 text-sm border rounded-md font-mono"
-                                      />
+                                      <div key={idx} className="relative">
+                                        <input
+                                          type="password"
+                                          value={key}
+                                          onChange={(e) => {
+                                            const newKeys = [...storeKeysInput]
+                                            newKeys[idx] = e.target.value
+                                            setStoreKeysInput(newKeys)
+                                          }}
+                                          placeholder={`Unseal Key ${idx + 1}${idx >= 3 ? ' (optional)' : ''}`}
+                                          className="w-full px-3 py-2 text-sm border rounded-md font-mono"
+                                        />
+                                        {idx >= 3 && (
+                                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">optional</span>
+                                        )}
+                                      </div>
                                     ))}
                                   </div>
                                 </div>
