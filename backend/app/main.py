@@ -133,15 +133,18 @@ async def lifespan(app: FastAPI):
 
 async def try_auto_unseal_vault():
     """
-    Attempt to automatically unseal Vault on startup using vault_keys.json.
-    This runs before the main Vault connection to ensure Vault is unsealed.
+    Attempt to automatically unseal Vault on startup.
+    
+    Tries methods in order:
+    1. Legacy vault_keys.json file
+    2. Encrypted keys from database with KMS-wrapped DEK
+    3. Encrypted keys from database with local DEK
     """
     import json
     from pathlib import Path
     
     # Check if Vault is sealed first
     try:
-        # Create a temporary client just to check seal status
         import hvac
         temp_client = hvac.Client(url=settings.VAULT_ADDR)
         seal_status = temp_client.sys.read_seal_status()
@@ -160,7 +163,10 @@ async def try_auto_unseal_vault():
         logger.warning(f"Could not check Vault seal status: {e}")
         return
     
-    # Look for vault_keys.json in multiple paths
+    keys = None
+    method_used = None
+    
+    # Method 1: Try legacy vault_keys.json file
     vault_keys_paths = [
         Path("/app/vault_data/vault_keys.json"),
         Path("/app/data/vault/vault_keys.json"),
@@ -169,34 +175,98 @@ async def try_auto_unseal_vault():
         Path("data/vault_keys.json")
     ]
     
-    vault_keys_path = None
     for path in vault_keys_paths:
         if path.exists():
-            vault_keys_path = path
-            logger.info(f"Found vault_keys.json at {path}")
-            break
+            try:
+                with open(path, 'r') as f:
+                    keys_data = json.load(f)
+                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                if keys:
+                    logger.info(f"Found {len(keys)} unseal keys in {path}")
+                    method_used = "vault_keys.json"
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to read {path}: {e}")
     
-    if not vault_keys_path:
-        logger.info("No vault_keys.json found - manual unseal required")
+    # Method 2: Try encrypted keys from database
+    if not keys:
+        try:
+            from app.core.database import SessionLocal
+            from app.core.auto_unseal import auto_unseal_manager
+            from app.models.ca import SystemConfig
+            from app.core.security import decrypt_value
+            
+            db = SessionLocal()
+            try:
+                # Check if we have encrypted keys
+                encrypted_keys = auto_unseal_manager.get_encrypted_keys(db)
+                if encrypted_keys:
+                    # Get priority order
+                    priority_config = db.query(SystemConfig).filter(
+                        SystemConfig.key == "unseal_priority"
+                    ).first()
+                    if priority_config:
+                        try:
+                            priority_order = json.loads(priority_config.value)
+                        except:
+                            priority_order = ["local", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+                    else:
+                        priority_order = ["local", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+                    
+                    # Try each provider
+                    for provider in priority_order:
+                        check_provider = "local" if provider == "local_file" else provider
+                        
+                        if check_provider == "local":
+                            # Try local DEK
+                            keys, error = auto_unseal_manager.retrieve_unseal_keys(db, "local", {})
+                            if keys:
+                                method_used = "local (database)"
+                                break
+                        else:
+                            # Get KMS config
+                            config = db.query(SystemConfig).filter(
+                                SystemConfig.key == f"seal_{provider}"
+                            ).first()
+                            if not config:
+                                config = db.query(SystemConfig).filter(
+                                    SystemConfig.key == f"vault_seal_{provider}"
+                                ).first()
+                            
+                            if config:
+                                try:
+                                    decrypted = decrypt_value(config.value)
+                                    kms_config = json.loads(decrypted)
+                                    if kms_config.get('enabled'):
+                                        keys, error = auto_unseal_manager.retrieve_unseal_keys(
+                                            db, provider, kms_config
+                                        )
+                                        if keys:
+                                            method_used = provider
+                                            break
+                                        elif error:
+                                            logger.warning(f"Auto-unseal with {provider} failed: {error}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to use {provider} for auto-unseal: {e}")
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.warning(f"Failed to check database for auto-unseal keys: {e}")
+    
+    if not keys:
+        logger.info("No auto-unseal keys found - manual unseal required")
         return
     
+    # Unseal using the keys
+    logger.info(f"Attempting auto-unseal with {len(keys)} keys via {method_used}")
+    
     try:
-        with open(vault_keys_path, 'r') as f:
-            keys_data = json.load(f)
-        
-        keys = keys_data.get('keys', [])
-        if not keys:
-            logger.warning("vault_keys.json exists but contains no keys")
-            return
-        
-        logger.info(f"Found {len(keys)} unseal keys in vault_keys.json - attempting auto-unseal")
-        
-        # Unseal using the keys
         for key in keys:
             try:
                 response = temp_client.sys.submit_unseal_key(key)
                 if not response.get('sealed', True):
-                    logger.info("Vault auto-unsealed successfully on startup")
+                    logger.info(f"Vault auto-unsealed successfully on startup via {method_used}")
                     return
             except Exception as e:
                 logger.warning(f"Unseal key submission failed: {e}")
@@ -207,10 +277,8 @@ async def try_auto_unseal_vault():
         if final_status.get('sealed', True):
             logger.error("Vault remains sealed after using all available keys")
         else:
-            logger.info("Vault auto-unsealed successfully on startup")
+            logger.info(f"Vault auto-unsealed successfully on startup via {method_used}")
             
-    except json.JSONDecodeError:
-        logger.error("vault_keys.json is not valid JSON")
     except Exception as e:
         logger.error(f"Auto-unseal failed: {e}")
 

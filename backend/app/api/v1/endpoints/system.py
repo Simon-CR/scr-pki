@@ -535,7 +535,8 @@ def unseal_vault(
 
 class AutoUnsealStatusResponse(BaseModel):
     available: bool
-    method: Optional[str] = None  # 'vault_keys_json' or 'kms' (future)
+    methods: List[str] = []  # Available methods in priority order
+    encrypted_keys_stored: bool = False
     message: str
 
 
@@ -546,15 +547,42 @@ def get_auto_unseal_status(
 ):
     """
     Check if auto-unseal is available.
-    Returns whether vault_keys.json exists or KMS is configured.
-    Priority: vault_keys.json > KMS configuration
+    Returns available methods based on stored encrypted keys and wrapped DEKs.
     """
     import json
     from pathlib import Path
     from app.core.security import decrypt_value
+    from app.core.auto_unseal import auto_unseal_manager
     
-    # Check for vault_keys.json FIRST (local file takes priority when it exists)
-    # Primary path is the mounted volume /app/vault_data/
+    methods = []
+    encrypted_keys_stored = False
+    
+    # Check if we have encrypted unseal keys stored
+    encrypted_keys = auto_unseal_manager.get_encrypted_keys(db)
+    if encrypted_keys:
+        encrypted_keys_stored = True
+        
+        # Get available providers that have wrapped DEKs
+        available_providers = auto_unseal_manager.get_available_providers(db)
+        
+        # Get priority order
+        priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
+        if priority_config:
+            try:
+                priority_order = json.loads(priority_config.value)
+            except:
+                priority_order = ["local", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+        else:
+            priority_order = ["local", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+        
+        # Return providers in priority order
+        for provider in priority_order:
+            # Map local_file to local
+            check_provider = "local" if provider == "local_file" else provider
+            if check_provider in available_providers:
+                methods.append(provider)
+    
+    # Also check for legacy vault_keys.json
     vault_keys_paths = [
         Path("/app/vault_data/vault_keys.json"),
         Path("/app/data/vault/vault_keys.json"),
@@ -570,124 +598,182 @@ def get_auto_unseal_status(
                     keys_data = json.load(f)
                 keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
                 if keys and len(keys) > 0:
-                    return AutoUnsealStatusResponse(
-                        available=True,
-                        method="vault_keys_json",
-                        message=f"Local auto-unseal ({len(keys)} keys in vault_keys.json)"
-                    )
-            except Exception as e:
-                logger.warning("Failed to read vault_keys.json", error=str(e))
+                    if "vault_keys_json" not in methods:
+                        methods.insert(0, "vault_keys_json")  # Legacy file takes highest priority
+                    break
+            except:
+                pass
     
-    # Check for KMS configuration in database (fallback)
-    kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_seal_config").first()
-    if kms_config:
-        try:
-            decrypted = decrypt_value(kms_config.value)
-            config = json.loads(decrypted)
-            if config.get('enabled') and config.get('provider') != 'shamir':
-                provider = config.get('provider', 'kms')
-                provider_names = {
-                    'transit': 'Self-Hosted Transit',
-                    'awskms': 'AWS KMS',
-                    'gcpckms': 'Google Cloud KMS',
-                    'azurekeyvault': 'Azure Key Vault',
-                    'ocikms': 'Oracle OCI KMS',
-                    'alicloudkms': 'AliCloud KMS'
-                }
-                return AutoUnsealStatusResponse(
-                    available=True,
-                    method=provider,
-                    message=f"{provider_names.get(provider, provider)} auto-unseal configured"
-                )
-        except Exception as e:
-            logger.warning("Failed to read KMS config from DB", error=str(e))
+    if methods:
+        provider_names = {
+            'vault_keys_json': 'Local File (vault_keys.json)',
+            'local': 'Database (local encryption)',
+            'local_file': 'Database (local encryption)',
+            'transit': 'Self-Hosted Transit',
+            'awskms': 'AWS KMS',
+            'gcpckms': 'Google Cloud KMS',
+            'azurekeyvault': 'Azure Key Vault',
+            'ocikms': 'Oracle OCI KMS',
+        }
+        method_names = [provider_names.get(m, m) for m in methods]
+        return AutoUnsealStatusResponse(
+            available=True,
+            methods=methods,
+            encrypted_keys_stored=encrypted_keys_stored,
+            message=f"Auto-unseal available via: {', '.join(method_names)}"
+        )
     
     return AutoUnsealStatusResponse(
         available=False,
-        method=None,
-        message="No auto-unseal method available. Place vault_keys.json in the data directory or configure KMS."
+        methods=[],
+        encrypted_keys_stored=False,
+        message="No auto-unseal method available. Initialize Vault with key storage enabled or configure KMS."
     )
+
+
+class AutoUnsealRequest(BaseModel):
+    """Request to auto-unseal with optional provider preference"""
+    preferred_provider: Optional[str] = None  # If specified, try this provider first
 
 
 @router.post("/config/vault/auto-unseal", status_code=status.HTTP_200_OK)
 def auto_unseal_vault(
+    request: AutoUnsealRequest = AutoUnsealRequest(),
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
 ):
     """
-    Automatically unseal Vault using available methods.
-    Tries vault_keys.json first, then KMS if configured.
+    Automatically unseal Vault using stored encrypted keys.
     
-    WARNING: This feature is for convenience in dev/test environments.
-    For production, consider using proper KMS-based auto-unseal.
+    Tries providers in priority order:
+    1. Preferred provider (if specified)
+    2. vault_keys.json (legacy)
+    3. KMS providers in configured priority order
+    4. Local database encryption
     """
     import json
     from pathlib import Path
+    from app.core.auto_unseal import auto_unseal_manager
     
-    # Check for vault_keys.json in multiple paths
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-        Path("data/vault_keys.json")
-    ]
+    errors = []
     
-    vault_keys_path = None
-    for path in vault_keys_paths:
-        if path.exists():
-            vault_keys_path = path
-            break
+    # Build list of providers to try
+    providers_to_try = []
     
-    if vault_keys_path:
+    if request.preferred_provider:
+        providers_to_try.append(request.preferred_provider)
+    
+    # Get priority order from database
+    priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
+    if priority_config:
         try:
-            with open(vault_keys_path, 'r') as f:
-                keys_data = json.load(f)
+            priority_order = json.loads(priority_config.value)
+        except:
+            priority_order = ["local_file", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+    else:
+        priority_order = ["local_file", "ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]
+    
+    # Add vault_keys.json as first option (legacy support)
+    if "vault_keys_json" not in providers_to_try:
+        providers_to_try.insert(0, "vault_keys_json")
+    
+    # Add remaining providers from priority order
+    for provider in priority_order:
+        if provider not in providers_to_try:
+            providers_to_try.append(provider)
+    
+    # Try each provider
+    for provider in providers_to_try:
+        logger.info(f"Attempting auto-unseal with provider: {provider}")
+        
+        try:
+            keys = None
             
-            keys = keys_data.get('keys', [])
-            if not keys:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="vault_keys.json exists but contains no unseal keys"
-                )
+            if provider == "vault_keys_json":
+                # Legacy: Try vault_keys.json file
+                vault_keys_paths = [
+                    Path("/app/vault_data/vault_keys.json"),
+                    Path("/app/data/vault/vault_keys.json"),
+                    Path("/app/data/vault_keys.json"),
+                    Path("data/vault/vault_keys.json"),
+                    Path("data/vault_keys.json")
+                ]
+                
+                for path in vault_keys_paths:
+                    if path.exists():
+                        try:
+                            with open(path, 'r') as f:
+                                keys_data = json.load(f)
+                            keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
+                            if keys:
+                                break
+                        except:
+                            pass
+                
+                if not keys:
+                    continue
+                    
+            elif provider in ["local", "local_file"]:
+                # Try local database encryption
+                keys, error = auto_unseal_manager.retrieve_unseal_keys(db, "local", {})
+                if error:
+                    errors.append(f"local: {error}")
+                    continue
+                    
+            else:
+                # Try KMS provider
+                # Get provider config
+                config = db.query(SystemConfig).filter(
+                    SystemConfig.key == f"seal_{provider}"
+                ).first()
+                if not config:
+                    config = db.query(SystemConfig).filter(
+                        SystemConfig.key == f"vault_seal_{provider}"
+                    ).first()
+                
+                if not config:
+                    continue
+                
+                try:
+                    decrypted = decrypt_value(config.value)
+                    kms_config = json.loads(decrypted)
+                except Exception as e:
+                    errors.append(f"{provider}: Failed to read config: {e}")
+                    continue
+                
+                if not kms_config.get('enabled'):
+                    continue
+                
+                keys, error = auto_unseal_manager.retrieve_unseal_keys(db, provider, kms_config)
+                if error:
+                    errors.append(f"{provider}: {error}")
+                    continue
             
-            # Attempt to unseal with the keys
-            result = vault_client.unseal_vault(keys)
-            
-            if result.get('sealed') is True:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Vault remained sealed. The keys in vault_keys.json may be incorrect or insufficient."
-                )
-            
-            # Force client reconnect/auth check
-            vault_client.connect()
-            
-            logger.info("Vault auto-unsealed successfully using vault_keys.json")
-            return {"message": "Vault unsealed successfully using vault_keys.json", "method": "vault_keys_json"}
-            
-        except json.JSONDecodeError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="vault_keys.json is not valid JSON"
-            )
-        except HTTPException:
-            raise
+            if keys:
+                # Attempt to unseal with the keys
+                result = vault_client.unseal_vault(keys)
+                
+                if result.get('sealed') is False:
+                    # Success!
+                    vault_client.connect()
+                    logger.info(f"Vault auto-unsealed successfully using {provider}")
+                    return {
+                        "message": f"Vault unsealed successfully using {provider}",
+                        "method": provider
+                    }
+                else:
+                    errors.append(f"{provider}: Vault remained sealed after applying keys")
+                    
         except Exception as e:
-            logger.error("Auto-unseal failed", error=str(e))
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Auto-unseal failed: {str(e)}"
-            )
+            errors.append(f"{provider}: {str(e)}")
+            logger.warning(f"Auto-unseal with {provider} failed: {e}")
+            continue
     
-    # Future: Try KMS auto-unseal
-    # kms_config = db.query(SystemConfig).filter(SystemConfig.key == "vault_kms_config").first()
-    # if kms_config:
-    #     ... implement KMS unseal ...
-    
+    # All methods failed
+    error_details = "; ".join(errors) if errors else "No auto-unseal methods available"
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="No auto-unseal method available. Place vault_keys.json in the data directory."
+        detail=f"Auto-unseal failed. Errors: {error_details}"
     )
 
 
@@ -1073,7 +1159,224 @@ def update_unseal_priority(
 
 
 # =============================================================================
-# Key Replication (Copy Unseal Keys to KMS Provider for Redundancy)
+# Secure Key Storage (Store Unseal Keys with DEK + KMS wrapping)
+# =============================================================================
+
+class StoreUnsealKeysRequest(BaseModel):
+    """Request to securely store unseal keys"""
+    keys: List[str]  # The unseal keys to store
+    wrap_with_providers: List[str] = []  # KMS providers to wrap DEK with
+    store_local: bool = True  # Also store with local encryption
+
+
+class StoreUnsealKeysResponse(BaseModel):
+    """Response from storing unseal keys"""
+    success: bool
+    message: str
+    providers_wrapped: List[str] = []
+    local_stored: bool = False
+
+
+@router.post("/config/vault/store-unseal-keys", response_model=StoreUnsealKeysResponse)
+def store_unseal_keys_securely(
+    request: StoreUnsealKeysRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Securely store Vault unseal keys using envelope encryption.
+    
+    This stores the keys encrypted with a DEK (Data Encryption Key),
+    then wraps the DEK with configured KMS providers for redundancy.
+    
+    Keys can be retrieved later for auto-unseal using any of the
+    configured KMS providers or local encryption.
+    """
+    from app.core.auto_unseal import auto_unseal_manager
+    
+    if not request.keys or len(request.keys) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No unseal keys provided"
+        )
+    
+    # Generate a new DEK
+    dek = auto_unseal_manager.generate_dek()
+    wrap_results = {}
+    providers_wrapped = []
+    
+    # Wrap DEK with each requested KMS provider
+    for provider in request.wrap_with_providers:
+        # Get provider config from database
+        config = db.query(SystemConfig).filter(
+            SystemConfig.key == f"seal_{provider}"
+        ).first()
+        if not config:
+            config = db.query(SystemConfig).filter(
+                SystemConfig.key == f"vault_seal_{provider}"
+            ).first()
+        
+        if config:
+            try:
+                decrypted = decrypt_value(config.value)
+                kms_config = json.loads(decrypted)
+                
+                if kms_config.get('enabled'):
+                    wrap_result = auto_unseal_manager.wrap_dek(dek, provider, kms_config)
+                    if wrap_result.get('success'):
+                        wrap_results[provider] = wrap_result
+                        providers_wrapped.append(provider)
+                        logger.info(f"DEK wrapped with {provider}")
+                    else:
+                        logger.warning(f"Failed to wrap DEK with {provider}: {wrap_result.get('error')}")
+                else:
+                    logger.info(f"Provider {provider} is not enabled, skipping")
+            except Exception as e:
+                logger.warning(f"Failed to process {provider} config: {e}")
+        else:
+            logger.warning(f"Provider {provider} not configured")
+    
+    # Store encrypted keys and wrapped DEKs
+    if wrap_results or request.store_local:
+        auto_unseal_manager.store_encrypted_keys(db, request.keys, dek, wrap_results)
+        
+        # Also store local DEK if requested
+        local_stored = False
+        if request.store_local:
+            auto_unseal_manager.store_local_dek(db, dek)
+            local_stored = True
+            if "local" not in providers_wrapped:
+                providers_wrapped.append("local")
+        
+        return StoreUnsealKeysResponse(
+            success=True,
+            message=f"Unseal keys stored securely. Auto-unseal available via: {', '.join(providers_wrapped)}",
+            providers_wrapped=providers_wrapped,
+            local_stored=local_stored
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No storage method available. Enable at least one KMS provider or local storage."
+        )
+
+
+@router.post("/config/vault/wrap-dek-with-provider")
+def wrap_dek_with_additional_provider(
+    provider: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Wrap the existing DEK with an additional KMS provider.
+    
+    This adds redundancy by allowing the DEK to be unwrapped
+    by multiple KMS providers.
+    """
+    from app.core.auto_unseal import auto_unseal_manager
+    
+    # First, we need to get the DEK - try local first
+    dek = auto_unseal_manager.get_local_dek(db)
+    
+    if not dek:
+        # Try to get DEK from another provider
+        available = auto_unseal_manager.get_available_providers(db)
+        for avail_provider in available:
+            if avail_provider == "local":
+                continue
+            
+            # Get provider config
+            config = db.query(SystemConfig).filter(
+                SystemConfig.key == f"seal_{avail_provider}"
+            ).first()
+            if not config:
+                config = db.query(SystemConfig).filter(
+                    SystemConfig.key == f"vault_seal_{avail_provider}"
+                ).first()
+            
+            if config:
+                try:
+                    decrypted = decrypt_value(config.value)
+                    kms_config = json.loads(decrypted)
+                    wrapped_dek = auto_unseal_manager.get_wrapped_dek(db, avail_provider)
+                    if wrapped_dek:
+                        dek = auto_unseal_manager.unwrap_dek(wrapped_dek, avail_provider, kms_config)
+                        if dek:
+                            break
+                except:
+                    continue
+    
+    if not dek:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No DEK available. Store unseal keys first."
+        )
+    
+    # Get the new provider's config
+    config = db.query(SystemConfig).filter(
+        SystemConfig.key == f"seal_{provider}"
+    ).first()
+    if not config:
+        config = db.query(SystemConfig).filter(
+            SystemConfig.key == f"vault_seal_{provider}"
+        ).first()
+    
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provider {provider} is not configured"
+        )
+    
+    try:
+        decrypted = decrypt_value(config.value)
+        kms_config = json.loads(decrypted)
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid configuration for {provider}"
+        )
+    
+    if not kms_config.get('enabled'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provider {provider} is not enabled"
+        )
+    
+    # Wrap DEK with the new provider
+    wrap_result = auto_unseal_manager.wrap_dek(dek, provider, kms_config)
+    
+    if wrap_result.get('success'):
+        # Store the wrapped DEK
+        dek_key = f"{auto_unseal_manager.DB_KEY_WRAPPED_DEK_PREFIX}{provider}"
+        dek_config = db.query(SystemConfig).filter(
+            SystemConfig.key == dek_key
+        ).first()
+        
+        if dek_config:
+            dek_config.value = json.dumps(wrap_result)
+        else:
+            dek_config = SystemConfig(
+                key=dek_key,
+                value=json.dumps(wrap_result)
+            )
+            db.add(dek_config)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"DEK wrapped with {provider} successfully",
+            "provider": provider
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to wrap DEK with {provider}: {wrap_result.get('error')}"
+        )
+
+
+# =============================================================================
+# Key Replication (Legacy - Copy Unseal Keys to KMS Provider for Redundancy)
 # =============================================================================
 
 class KeyReplicationSource(str, Enum):
@@ -2917,13 +3220,22 @@ def perform_seal_migration(
     )
 
 
+class VaultInitRequest(BaseModel):
+    """Request for Vault initialization with auto-unseal options"""
+    store_keys_locally: bool = True  # Store encrypted keys in DB with local DEK
+    wrap_with_kms: List[str] = []  # List of KMS providers to wrap DEK with
+
+
 class VaultInitResponse(BaseModel):
     root_token: str
     keys: List[str]
     message: str
+    keys_stored: bool = False
+    kms_wrapped: List[str] = []
 
 @router.post("/config/vault/init", response_model=VaultInitResponse)
 def initialize_vault(
+    request: VaultInitRequest = VaultInitRequest(),
     db: Session = Depends(get_db),
     current_user = Depends(require_admin)
 ):
@@ -2931,7 +3243,13 @@ def initialize_vault(
     Initialize a fresh Vault instance.
     Returns the root token and unseal keys.
     Automatically saves the root token as the system configuration.
+    
+    Optionally stores unseal keys encrypted in the database with:
+    - Local DEK (encrypted with Fernet) for offline/dev use
+    - KMS-wrapped DEK for production use with cloud providers
     """
+    from app.core.auto_unseal import auto_unseal_manager
+    
     try:
         # 1. Initialize Vault
         result = vault_client.initialize_vault(shares=5, threshold=3)
@@ -2959,14 +3277,67 @@ def initialize_vault(
             vault_client.connect()
             
             # 5. Enable KV Engine
-            # We need to ensure the KV v2 engine is enabled at 'secret/'
-            # This requires the client to be authenticated (which it is now)
             vault_client.enable_kv_engine()
+        
+        # 6. Store unseal keys securely for auto-unseal
+        keys_stored = False
+        kms_wrapped = []
+        
+        if request.store_keys_locally or request.wrap_with_kms:
+            # Generate a new DEK
+            dek = auto_unseal_manager.generate_dek()
+            wrap_results = {}
+            
+            # Wrap DEK with configured KMS providers
+            for provider in request.wrap_with_kms:
+                # Get provider config from database
+                config = db.query(SystemConfig).filter(
+                    SystemConfig.key == f"seal_{provider}"
+                ).first()
+                if not config:
+                    config = db.query(SystemConfig).filter(
+                        SystemConfig.key == f"vault_seal_{provider}"
+                    ).first()
+                
+                if config:
+                    try:
+                        decrypted = decrypt_value(config.value)
+                        kms_config = json.loads(decrypted)
+                        
+                        if kms_config.get('enabled'):
+                            wrap_result = auto_unseal_manager.wrap_dek(dek, provider, kms_config)
+                            if wrap_result.get('success'):
+                                wrap_results[provider] = wrap_result
+                                kms_wrapped.append(provider)
+                                logger.info(f"DEK wrapped with {provider}")
+                            else:
+                                logger.warning(f"Failed to wrap DEK with {provider}: {wrap_result.get('error')}")
+                    except Exception as e:
+                        logger.warning(f"Failed to process {provider} config: {e}")
+            
+            # Store encrypted keys and wrapped DEKs
+            if wrap_results or request.store_keys_locally:
+                auto_unseal_manager.store_encrypted_keys(db, keys, dek, wrap_results)
+                keys_stored = True
+                
+                # Also store local DEK if requested
+                if request.store_keys_locally:
+                    auto_unseal_manager.store_local_dek(db, dek)
+                    if "local" not in kms_wrapped:
+                        kms_wrapped.append("local")
+        
+        message = "Vault initialized successfully!"
+        if keys_stored:
+            message += f" Keys encrypted and stored. Auto-unseal available via: {', '.join(kms_wrapped) or 'local'}."
+        else:
+            message += " SAVE THESE KEYS IMMEDIATELY. They will not be shown again."
             
         return VaultInitResponse(
             root_token=root_token,
             keys=keys,
-            message="Vault initialized successfully! SAVE THESE KEYS IMMEDIATELY. They will not be shown again."
+            message=message,
+            keys_stored=keys_stored,
+            kms_wrapped=kms_wrapped
         )
         
     except HTTPException:
