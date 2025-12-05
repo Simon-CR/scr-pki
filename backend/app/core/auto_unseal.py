@@ -1062,9 +1062,34 @@ class AutoUnsealKeyManager:
                 "error": "No KMS providers available for auto-unseal"
             }
         
-        # Priority order: cloud KMS first, local last
-        priority_order = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
+        # Get priority order from database
+        from app.models.system import SystemConfig
+        priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
+        if priority_config:
+            try:
+                db_priority = json.loads(priority_config.value)
+                # Map UI names to provider names (local_file -> local for our purposes)
+                priority_order = []
+                for method in db_priority:
+                    if method == "local_file":
+                        priority_order.append("local")
+                    elif method in ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit"]:
+                        priority_order.append(method)
+                # Ensure all available providers are in the list
+                for p in providers:
+                    if p not in priority_order:
+                        priority_order.append(p)
+            except:
+                priority_order = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
+        else:
+            priority_order = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
+        
+        # Sort available providers by priority
         sorted_providers = sorted(providers, key=lambda p: priority_order.index(p) if p in priority_order else 100)
+        
+        logger.info(f"Auto-unseal priority order: {priority_order}")
+        logger.info(f"Available providers: {providers}")
+        logger.info(f"Sorted providers to try: {sorted_providers}")
         
         # Try each provider
         last_error = None

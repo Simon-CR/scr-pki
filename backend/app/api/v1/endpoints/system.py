@@ -997,10 +997,13 @@ def get_unseal_priority(
     if priority_config:
         try:
             priority_order = json.loads(priority_config.value)
+            # Ensure shamir is in the list (for backwards compatibility)
+            if "shamir" not in priority_order:
+                priority_order.append("shamir")
         except:
-            priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+            priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "shamir"]
     else:
-        priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms"]
+        priority_order = ["local_file", "transit", "awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "shamir"]
     
     # Get all KMS configurations from database
     kms_configs = {}
@@ -1027,8 +1030,12 @@ def get_unseal_priority(
             except:
                 pass
     
+    # Get providers that have wrapped DEKs (can actually auto-unseal)
+    from app.core.auto_unseal import auto_unseal_manager
+    auto_unseal_providers = auto_unseal_manager.get_available_providers(db)
+    
     # Build method list in priority order
-    active_method = None
+    methods = []
     
     # Add local file first if configured
     if "local_file" in priority_order:
@@ -1043,9 +1050,6 @@ def get_unseal_priority(
         priority=priority,
         details=f"{local_file_key_count} keys stored" if local_file_configured else "Not configured"
     ))
-    
-    if local_file_configured and active_method is None:
-        active_method = "local_file"
     
     # Add KMS providers
     provider_names = {
@@ -1066,28 +1070,57 @@ def get_unseal_priority(
         configured = provider in kms_configs
         enabled = configured and kms_configs.get(provider, {}).get('enabled', False)
         
+        # Check if this provider can actually auto-unseal (has wrapped DEK)
+        can_auto_unseal = provider in auto_unseal_providers
+        
         methods.append(UnsealMethodStatus(
             method=provider,
             configured=configured,
             enabled=enabled,
             priority=priority,
-            details=name if configured else f"{name} - Not configured"
+            details=f"{name} ✓ Ready for auto-unseal" if can_auto_unseal else (name if configured else f"{name} - Not configured")
         ))
-        
-        if enabled and active_method is None:
-            active_method = provider
     
     # Add Shamir (manual unseal) as always-available fallback
+    if "shamir" in priority_order:
+        shamir_priority = priority_order.index("shamir")
+    else:
+        shamir_priority = 998  # Default to near the end if not in saved priority
+    
     methods.append(UnsealMethodStatus(
         method="shamir",
         configured=True,  # Always available
         enabled=True,     # Always enabled as fallback
-        priority=998,     # Near the end
+        priority=shamir_priority,
         details="Manual Unseal - Use 3 of 5 Shamir keys"
     ))
     
     # Sort by priority
     methods.sort(key=lambda m: m.priority)
+    
+    # Determine active method: highest priority method that can actually auto-unseal
+    # This should be the method that will be used when auto-unseal is triggered
+    active_method = None
+    
+    # Check if local DEK is available (can auto-unseal with 'local')
+    local_dek_available = 'local' in auto_unseal_providers
+    
+    for method in methods:
+        if method.method == "local_file" and local_file_configured:
+            active_method = "local_file"
+            break
+        elif method.method == "shamir":
+            # Shamir is always available as fallback but requires manual input
+            if active_method is None:
+                active_method = "shamir"
+            break
+        elif method.method in auto_unseal_providers:
+            active_method = method.method
+            break
+        elif method.method == "local_file" and local_dek_available:
+            # If local DEK is stored (not local_file), it counts as local
+            active_method = "local"
+            break
     
     return UnsealPriorityResponse(
         methods=methods,
@@ -1309,10 +1342,11 @@ def wrap_dek_with_additional_provider(
     try:
         decrypted = decrypt_value(config.value)
         kms_config = json.loads(decrypted)
-    except:
+    except Exception as e:
+        logger.error(f"Failed to decrypt/parse config for {provider}: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid configuration for {provider}"
+            detail=f"Invalid configuration for {provider}: {str(e)}"
         )
     
     if not kms_config.get('enabled'):
