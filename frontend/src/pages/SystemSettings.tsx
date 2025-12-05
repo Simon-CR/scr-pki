@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
@@ -190,6 +190,33 @@ const SystemSettings: React.FC = () => {
     localStorage.setItem('pki-seal-config-expanded', String(sealConfigExpanded))
   }, [sealConfigExpanded])
 
+  // Scroll position restoration - use ref to track if we've restored
+  const scrollRestoredRef = useRef(false)
+  const savedScrollRef = useRef<number | null>(null)
+  
+  // Capture scroll position on mount (before any async operations)
+  useLayoutEffect(() => {
+    // Disable browser's automatic scroll restoration
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual'
+    }
+    
+    const savedPos = sessionStorage.getItem('pki-settings-scroll')
+    if (savedPos) {
+      savedScrollRef.current = parseInt(savedPos, 10)
+      sessionStorage.removeItem('pki-settings-scroll')
+    }
+  }, [])
+  
+  // Restore scroll position immediately when healthData loads (content is ready)
+  useLayoutEffect(() => {
+    if (healthData && savedScrollRef.current !== null && !scrollRestoredRef.current) {
+      window.scrollTo(0, savedScrollRef.current)
+      scrollRestoredRef.current = true
+      savedScrollRef.current = null
+    }
+  }, [healthData])
+
   // Save scroll position before unload
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -201,21 +228,6 @@ const SystemSettings: React.FC = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
   }, [])
-
-  // Restore scroll position after content loads
-  useEffect(() => {
-    if (healthData) {
-      const savedScrollPos = sessionStorage.getItem('pki-settings-scroll')
-      if (savedScrollPos) {
-        // Use setTimeout to ensure content has rendered after healthData loads
-        const timer = setTimeout(() => {
-          window.scrollTo(0, parseInt(savedScrollPos, 10))
-          sessionStorage.removeItem('pki-settings-scroll')
-        }, 150)
-        return () => clearTimeout(timer)
-      }
-    }
-  }, [healthData])
 
   useEffect(() => {
     // Check for tab query parameter
