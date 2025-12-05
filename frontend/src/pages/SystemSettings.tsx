@@ -73,6 +73,12 @@ const SystemSettings: React.FC = () => {
   const [replicationLoading, setReplicationLoading] = useState(false)
   const [replicationStatus, setReplicationStatus] = useState<{ has_local_keys: boolean; local_key_count: number; replications: Array<{ destination: string; replicated_at?: string; status: string }> } | null>(null)
   
+  // Store Unseal Keys State (DEK + KMS wrapping)
+  const [storeKeysInput, setStoreKeysInput] = useState<string[]>(['', '', '', '', ''])
+  const [storeKeysProviders, setStoreKeysProviders] = useState<string[]>(['local', 'ocikms'])
+  const [storeKeysLoading, setStoreKeysLoading] = useState(false)
+  const [wrapDekLoading, setWrapDekLoading] = useState<string | null>(null)
+  
   // Quick Import State for KMS configs
   const [ociConfigImport, setOciConfigImport] = useState('')
   const [awsCredentialsImport, setAwsCredentialsImport] = useState('')
@@ -487,6 +493,73 @@ const SystemSettings: React.FC = () => {
       toast.error(error.response?.data?.detail || 'Failed to replicate keys')
     } finally {
       setReplicationLoading(false)
+    }
+  }
+
+  // Store Unseal Keys Functions (DEK + KMS wrapping)
+  const handleStoreUnsealKeys = async () => {
+    const validKeys = storeKeysInput.filter(k => k.trim() !== '')
+    if (validKeys.length < 3) {
+      toast.error('Please enter at least 3 unseal keys')
+      return
+    }
+
+    const confirmed = await confirm({
+      title: 'Store Unseal Keys',
+      message: `This will encrypt your ${validKeys.length} unseal keys with a Data Encryption Key (DEK) and wrap the DEK with the selected KMS providers. This enables secure auto-unseal on startup.`,
+      confirmLabel: 'Store Keys',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setStoreKeysLoading(true)
+    try {
+      const response = await systemService.storeUnsealKeys(validKeys, storeKeysProviders)
+      toast.success(response.message)
+      
+      // Show any provider errors
+      if (response.errors && Object.keys(response.errors).length > 0) {
+        Object.entries(response.errors).forEach(([provider, error]) => {
+          toast.error(`${provider}: ${error}`, { duration: 5000 })
+        })
+      }
+      
+      // Reload status
+      await loadAutoUnsealStatus()
+      await loadReplicationStatus()
+      
+      // Clear the input
+      setStoreKeysInput(['', '', '', '', ''])
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to store unseal keys')
+    } finally {
+      setStoreKeysLoading(false)
+    }
+  }
+
+  const handleWrapDekWithProvider = async (provider: string) => {
+    const confirmed = await confirm({
+      title: 'Wrap DEK with Provider',
+      message: `This will wrap the existing Data Encryption Key (DEK) with ${provider.toUpperCase()}. This adds redundancy for auto-unseal.`,
+      confirmLabel: 'Wrap DEK',
+      variant: 'info'
+    })
+    if (!confirmed) return
+
+    setWrapDekLoading(provider)
+    try {
+      const response = await systemService.wrapDekWithProvider(provider)
+      if (response.success) {
+        toast.success(response.message)
+        await loadAutoUnsealStatus()
+        await loadReplicationStatus()
+      } else {
+        toast.error(response.error || 'Failed to wrap DEK')
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to wrap DEK with provider')
+    } finally {
+      setWrapDekLoading(null)
     }
   }
 
@@ -2218,11 +2291,170 @@ const SystemSettings: React.FC = () => {
                             </div>
                           )}
 
+                          {/* Store Unseal Keys Section - DEK + KMS wrapping */}
+                          <div className="border-t pt-4">
+                            <div className="flex items-center mb-3">
+                              <Lock className="h-5 w-5 text-green-500 mr-2" />
+                              <h4 className="text-sm font-medium text-gray-900">Store Unseal Keys (Secure Auto-Unseal)</h4>
+                            </div>
+                            <p className="text-xs text-gray-500 mb-4">
+                              Store your Vault unseal keys encrypted in the database. Keys are protected with envelope encryption:
+                              a Data Encryption Key (DEK) encrypts the keys, and the DEK is wrapped by your configured KMS providers.
+                            </p>
+
+                            {/* Current Status */}
+                            {autoUnsealStatus && autoUnsealStatus.available && (
+                              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
+                                <div className="flex items-center">
+                                  <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+                                  <div>
+                                    <p className="text-sm font-medium text-green-800">Auto-Unseal Configured</p>
+                                    <p className="text-xs text-green-700">{autoUnsealStatus.message}</p>
+                                  </div>
+                                </div>
+                                {autoUnsealStatus.methods && autoUnsealStatus.methods.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {autoUnsealStatus.methods.map((method, idx) => (
+                                      <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                        {method.method.toUpperCase()}
+                                        {method.available && <CheckCircle className="h-3 w-3 ml-1" />}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Store Keys Form */}
+                            <div className="space-y-4 p-4 bg-gray-50 rounded-md">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Unseal Keys</label>
+                                <p className="text-xs text-gray-500 mb-2">Enter all 5 unseal keys from your Vault initialization</p>
+                                <div className="space-y-2">
+                                  {storeKeysInput.map((key, idx) => (
+                                    <input
+                                      key={idx}
+                                      type="password"
+                                      value={key}
+                                      onChange={(e) => {
+                                        const newKeys = [...storeKeysInput]
+                                        newKeys[idx] = e.target.value
+                                        setStoreKeysInput(newKeys)
+                                      }}
+                                      placeholder={`Unseal Key ${idx + 1}`}
+                                      className="w-full px-3 py-2 text-sm border rounded-md font-mono"
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* KMS Provider Selection */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Wrap DEK with Providers</label>
+                                <p className="text-xs text-gray-500 mb-2">Select which KMS providers to use for wrapping the encryption key</p>
+                                <div className="space-y-2">
+                                  <label className="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={storeKeysProviders.includes('local')}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setStoreKeysProviders([...storeKeysProviders, 'local'])
+                                        } else {
+                                          setStoreKeysProviders(storeKeysProviders.filter(p => p !== 'local'))
+                                        }
+                                      }}
+                                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">Local (Fernet) - Always recommended as fallback</span>
+                                  </label>
+                                  {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').map(m => (
+                                    <label key={m.method} className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={storeKeysProviders.includes(m.method)}
+                                        onChange={(e) => {
+                                          if (e.target.checked) {
+                                            setStoreKeysProviders([...storeKeysProviders, m.method])
+                                          } else {
+                                            setStoreKeysProviders(storeKeysProviders.filter(p => p !== m.method))
+                                          }
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                      />
+                                      <span className="ml-2 text-sm text-gray-700">
+                                        {m.method === 'ocikms' ? 'OCI KMS' :
+                                         m.method === 'gcpckms' ? 'GCP Cloud KMS' :
+                                         m.method === 'awskms' ? 'AWS KMS' :
+                                         m.method === 'azurekeyvault' ? 'Azure Key Vault' :
+                                         m.method === 'transit' ? 'Vault Transit' :
+                                         m.method.toUpperCase()}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Store Button */}
+                              <div className="flex items-center space-x-3 pt-2">
+                                <button
+                                  type="button"
+                                  onClick={handleStoreUnsealKeys}
+                                  disabled={storeKeysLoading || storeKeysInput.filter(k => k.trim()).length < 3 || storeKeysProviders.length === 0}
+                                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {storeKeysLoading ? (
+                                    <>
+                                      <RefreshCw className="animate-spin h-4 w-4 mr-2" />
+                                      Storing...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Lock className="h-4 w-4 mr-2" />
+                                      Store Unseal Keys
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Add Additional Provider Section */}
+                            {autoUnsealStatus?.available && (
+                              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add Redundancy</h5>
+                                <p className="text-xs text-blue-700 mb-3">
+                                  Wrap the existing DEK with additional KMS providers for redundancy.
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {unsealMethods
+                                    .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
+                                    .filter(m => !autoUnsealStatus.methods?.some(am => am.method === m.method))
+                                    .map(m => (
+                                      <button
+                                        key={m.method}
+                                        type="button"
+                                        onClick={() => handleWrapDekWithProvider(m.method)}
+                                        disabled={wrapDekLoading === m.method}
+                                        className="inline-flex items-center px-3 py-1.5 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 disabled:opacity-50"
+                                      >
+                                        {wrapDekLoading === m.method ? (
+                                          <RefreshCw className="animate-spin h-3 w-3 mr-1" />
+                                        ) : (
+                                          <Zap className="h-3 w-3 mr-1" />
+                                        )}
+                                        Add {m.method.toUpperCase()}
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
                           {/* Key Replication Section */}
                           <div className="border-t pt-4">
                             <div className="flex items-center mb-3">
                               <Archive className="h-5 w-5 text-purple-500 mr-2" />
-                              <h4 className="text-sm font-medium text-gray-900">Key Replication (Backup)</h4>
+                              <h4 className="text-sm font-medium text-gray-900">Key Replication (Legacy Backup)</h4>
                             </div>
                             <p className="text-xs text-gray-500 mb-4">
                               Replicate your Vault unseal keys to a configured KMS provider for redundancy and disaster recovery.

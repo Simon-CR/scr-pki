@@ -281,6 +281,26 @@ export const systemService = {
     return api.post<KeyReplicationResponse>('/system/config/vault/replicate-keys', data)
   },
 
+  // Store Unseal Keys with DEK + KMS wrapping
+  storeUnsealKeys: async (keys: string[], providers: string[]): Promise<{
+    message: string;
+    keys_stored: number;
+    providers_wrapped: string[];
+    errors: Record<string, string>;
+  }> => {
+    return api.post('/system/config/vault/store-unseal-keys', { keys, wrap_with_providers: providers })
+  },
+
+  // Wrap existing DEK with additional provider
+  wrapDekWithProvider: async (provider: string): Promise<{
+    message: string;
+    provider: string;
+    success: boolean;
+    error?: string;
+  }> => {
+    return api.post('/system/config/vault/wrap-dek-with-provider', { provider })
+  },
+
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {
     return api.post<{message: string}>('/system/reset', null, { params: { include_config: includeConfig } })
   },
