@@ -1314,7 +1314,7 @@ const SystemSettings: React.FC = () => {
                                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-yellow-500">optional</span>
                                     )}
                                   </div>
-                                ))}}
+                                ))}
                                 <button
                                     type="button"
                                     onClick={handleUnsealVault}
