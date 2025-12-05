@@ -674,9 +674,8 @@ def auto_unseal_vault_endpoint(
     
     Tries providers in priority order:
     1. Preferred provider (if specified)
-    2. vault_keys.json (legacy)
-    3. Cloud KMS providers (OCI, GCP, AWS, Azure)
-    4. Local database encryption
+    2. Envelope encryption (Cloud KMS providers in priority order)
+    3. vault_keys.json (legacy fallback)
     """
     import json
     from pathlib import Path
@@ -706,7 +705,18 @@ def auto_unseal_vault_endpoint(
                     detail=f"Vault remained sealed after applying keys from {request.preferred_provider}"
                 )
     
-    # Try legacy vault_keys.json first (for backward compatibility)
+    # Try envelope encryption system first (respects priority order)
+    result = auto_unseal_manager.auto_unseal_vault(db)
+    
+    if result.get("success"):
+        vault_client.connect()
+        return {
+            "message": result.get("message", "Vault unsealed successfully"),
+            "method": result.get("provider", "unknown"),
+            "keys_used": result.get("keys_used", 0)
+        }
+    
+    # Fall back to legacy vault_keys.json
     vault_keys_paths = [
         Path("/app/vault_data/vault_keys.json"),
         Path("/app/data/vault/vault_keys.json"),
@@ -722,10 +732,10 @@ def auto_unseal_vault_endpoint(
                     keys_data = json.load(f)
                 keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
                 if keys:
-                    result = vault_client.unseal_vault(keys)
-                    if result.get('sealed') is False:
+                    unseal_result = vault_client.unseal_vault(keys)
+                    if unseal_result.get('sealed') is False:
                         vault_client.connect()
-                        logger.info("Vault auto-unsealed successfully using vault_keys.json")
+                        logger.info("Vault auto-unsealed successfully using vault_keys.json (fallback)")
                         return {
                             "message": "Vault unsealed successfully using vault_keys.json",
                             "method": "vault_keys_json"
@@ -733,21 +743,11 @@ def auto_unseal_vault_endpoint(
             except Exception as e:
                 logger.warning(f"Failed to use vault_keys.json at {path}: {e}")
     
-    # Use the auto_unseal_vault method from the manager
-    result = auto_unseal_manager.auto_unseal_vault(db)
-    
-    if result.get("success"):
-        vault_client.connect()
-        return {
-            "message": result.get("message", "Vault unsealed successfully"),
-            "method": result.get("provider", "unknown"),
-            "keys_used": result.get("keys_used", 0)
-        }
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Auto-unseal failed: {result.get('error', 'Unknown error')}"
-        )
+    # All methods failed
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Auto-unseal failed: {result.get('error', 'No providers available')}"
+    )
 
 
 class CreateVaultKeysFileRequest(BaseModel):
@@ -1285,6 +1285,7 @@ def wrap_dek_with_additional_provider(
     by multiple KMS providers.
     """
     from app.core.auto_unseal import auto_unseal_manager
+    from app.core.security import decrypt_value
     
     # First, we need to get the DEK - try local first
     dek = auto_unseal_manager.get_local_dek(db)
