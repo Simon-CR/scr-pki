@@ -291,11 +291,18 @@ class AutoUnsealKeyManager:
     def wrap_dek_with_gcp_kms(self, dek: bytes, kms_config: dict) -> Dict[str, Any]:
         """
         Wrap (encrypt) the DEK using GCP Cloud KMS.
+        
+        Args:
+            dek: The Data Encryption Key to wrap
+            kms_config: GCP KMS configuration
+            
+        Returns:
+            Dict with wrapped_dek and metadata (including encrypted credentials for later unwrapping)
         """
         try:
             from google.cloud import kms
             from google.oauth2 import service_account
-            from app.core.security import decrypt_value
+            from app.core.security import decrypt_value, encrypt_value
             
             project = kms_config.get('project')
             location = kms_config.get('location') or kms_config.get('region')
@@ -306,13 +313,14 @@ class AutoUnsealKeyManager:
             if not all([project, location, key_ring, crypto_key]):
                 return {"success": False, "error": "Missing GCP KMS configuration"}
             
-            # Create client
+            # Decrypt credentials if encrypted
+            decrypted_credentials = None
             if credentials_json:
                 try:
-                    credentials_json = decrypt_value(credentials_json)
+                    decrypted_credentials = decrypt_value(credentials_json)
                 except:
-                    pass
-                creds_dict = json.loads(credentials_json)
+                    decrypted_credentials = credentials_json
+                creds_dict = json.loads(decrypted_credentials)
                 credentials = service_account.Credentials.from_service_account_info(creds_dict)
                 client = kms.KeyManagementServiceClient(credentials=credentials)
             else:
@@ -326,13 +334,24 @@ class AutoUnsealKeyManager:
                 request={"name": key_name, "plaintext": dek}
             )
             
-            return {
+            # Build result with full config needed for unwrapping
+            result = {
                 "success": True,
                 "wrapped_dek": base64.b64encode(encrypt_response.ciphertext).decode('utf-8'),
                 "key_name": key_name,
+                "project": project,
+                "location": location,
+                "key_ring": key_ring,
+                "crypto_key": crypto_key,
                 "provider": "gcpckms",
                 "wrapped_at": datetime.now(timezone.utc).isoformat()
             }
+            
+            # Store encrypted credentials for later unwrapping
+            if decrypted_credentials:
+                result["credentials_encrypted"] = encrypt_value(decrypted_credentials)
+            
+            return result
             
         except Exception as e:
             logger.error(f"GCP KMS wrap failed: {e}")
@@ -341,6 +360,13 @@ class AutoUnsealKeyManager:
     def unwrap_dek_with_gcp_kms(self, wrapped_dek: str, kms_config: dict) -> Optional[bytes]:
         """
         Unwrap (decrypt) the DEK using GCP Cloud KMS.
+        
+        Args:
+            wrapped_dek: The wrapped DEK ciphertext
+            kms_config: GCP KMS configuration (can include credentials_encrypted from wrap result)
+            
+        Returns:
+            The unwrapped DEK bytes, or None on failure
         """
         try:
             from google.cloud import kms
@@ -351,21 +377,35 @@ class AutoUnsealKeyManager:
             location = kms_config.get('location') or kms_config.get('region')
             key_ring = kms_config.get('key_ring')
             crypto_key = kms_config.get('crypto_key')
-            credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
             
             if not all([project, location, key_ring, crypto_key]):
-                logger.error("Missing GCP KMS configuration for unwrap")
+                logger.error(f"Missing GCP KMS configuration for unwrap: project={project}, location={location}, key_ring={key_ring}, crypto_key={crypto_key}")
                 return None
             
-            if credentials_json:
+            # Try to get credentials from encrypted storage first (from wrap result)
+            credentials_json = None
+            credentials_encrypted = kms_config.get('credentials_encrypted')
+            if credentials_encrypted:
                 try:
-                    credentials_json = decrypt_value(credentials_json)
-                except:
-                    pass
+                    credentials_json = decrypt_value(credentials_encrypted)
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt stored credentials: {e}, trying direct credentials")
+            
+            # Fall back to direct credentials if not found in encrypted storage
+            if not credentials_json:
+                credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
+                if credentials_json:
+                    try:
+                        credentials_json = decrypt_value(credentials_json)
+                    except:
+                        pass
+            
+            if credentials_json:
                 creds_dict = json.loads(credentials_json)
                 credentials = service_account.Credentials.from_service_account_info(creds_dict)
                 client = kms.KeyManagementServiceClient(credentials=credentials)
             else:
+                # Use default credentials (e.g., from environment)
                 client = kms.KeyManagementServiceClient()
             
             key_name = client.crypto_key_path(project, location, key_ring, crypto_key)
@@ -1006,6 +1046,8 @@ class AutoUnsealKeyManager:
                 "use_instance_principal": dek_record.get("use_instance_principal"),
                 # GCP-specific  
                 "credentials_encrypted": dek_record.get("credentials_encrypted"),
+                "key_ring": dek_record.get("key_ring"),
+                "crypto_key": dek_record.get("crypto_key"),
             }
             # Override with provided config if any
             if kms_config:
