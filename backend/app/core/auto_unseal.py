@@ -257,7 +257,8 @@ class AutoUnsealKeyManager:
                 if not private_key: missing.append("key_file")
                 
                 if missing:
-                    logger.error(f"OCI KMS unwrap failed: {{{', '.join([f'\"{m}\": \"missing\"' for m in missing])}}}")
+                    missing_str = ', '.join([f'"{m}": "missing"' for m in missing])
+                    logger.error(f"OCI KMS unwrap failed: {{{missing_str}}}")
                     return None
                 
                 oci_config = {
