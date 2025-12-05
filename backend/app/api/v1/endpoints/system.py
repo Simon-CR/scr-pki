@@ -609,31 +609,8 @@ def get_auto_unseal_status(
             if check_provider in available_providers:
                 methods.append(provider)
     
-    # Also check for legacy vault_keys.json
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-        Path("data/vault_keys.json")
-    ]
-    
-    for vault_keys_path in vault_keys_paths:
-        if vault_keys_path.exists():
-            try:
-                with open(vault_keys_path, 'r') as f:
-                    keys_data = json.load(f)
-                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                if keys and len(keys) > 0:
-                    if "vault_keys_json" not in methods:
-                        methods.insert(0, "vault_keys_json")  # Legacy file takes highest priority
-                    break
-            except:
-                pass
-    
     if methods:
         provider_names = {
-            'vault_keys_json': 'Local File (vault_keys.json)',
             'local': 'Database (local encryption)',
             'local_file': 'Database (local encryption)',
             'transit': 'Self-Hosted Transit',
@@ -672,17 +649,13 @@ def auto_unseal_vault_endpoint(
     """
     Automatically unseal Vault using stored encrypted keys.
     
-    Tries providers in priority order:
-    1. Preferred provider (if specified)
-    2. Envelope encryption (Cloud KMS providers in priority order)
-    3. vault_keys.json (legacy fallback)
+    Tries providers in priority order based on database configuration.
+    Uses envelope encryption with DEK wrapped by configured KMS providers.
     """
-    import json
-    from pathlib import Path
     from app.core.auto_unseal import auto_unseal_manager
     
-    # If preferred provider is specified and it's not vault_keys_json, use it directly
-    if request.preferred_provider and request.preferred_provider not in ["vault_keys_json", "legacy"]:
+    # If preferred provider is specified, use it directly
+    if request.preferred_provider:
         keys, error = auto_unseal_manager.retrieve_unseal_keys(db, request.preferred_provider)
         if error:
             raise HTTPException(
@@ -705,7 +678,7 @@ def auto_unseal_vault_endpoint(
                     detail=f"Vault remained sealed after applying keys from {request.preferred_provider}"
                 )
     
-    # Try envelope encryption system first (respects priority order)
+    # Use envelope encryption system (respects priority order from database)
     result = auto_unseal_manager.auto_unseal_vault(db)
     
     if result.get("success"):
@@ -716,33 +689,6 @@ def auto_unseal_vault_endpoint(
             "keys_used": result.get("keys_used", 0)
         }
     
-    # Fall back to legacy vault_keys.json
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-        Path("data/vault_keys.json")
-    ]
-    
-    for path in vault_keys_paths:
-        if path.exists():
-            try:
-                with open(path, 'r') as f:
-                    keys_data = json.load(f)
-                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                if keys:
-                    unseal_result = vault_client.unseal_vault(keys)
-                    if unseal_result.get('sealed') is False:
-                        vault_client.connect()
-                        logger.info("Vault auto-unsealed successfully using vault_keys.json (fallback)")
-                        return {
-                            "message": "Vault unsealed successfully using vault_keys.json",
-                            "method": "vault_keys_json"
-                        }
-            except Exception as e:
-                logger.warning(f"Failed to use vault_keys.json at {path}: {e}")
-    
     # All methods failed
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -750,181 +696,9 @@ def auto_unseal_vault_endpoint(
     )
 
 
-class CreateVaultKeysFileRequest(BaseModel):
-    """Request to create vault_keys.json for local auto-unseal"""
-    keys: List[str]  # The unseal keys (base64 or hex encoded)
-
-
-class VaultKeysFileStatusResponse(BaseModel):
-    """Response for vault_keys.json status"""
-    exists: bool
-    key_count: int = 0
-    message: str
-
-
-@router.get("/config/vault/keys-file-status", response_model=VaultKeysFileStatusResponse)
-def get_vault_keys_file_status(
-    current_user = Depends(require_admin)
-):
-    """
-    Check if vault_keys.json exists and is valid.
-    """
-    import json
-    from pathlib import Path
-    
-    # Check multiple paths for vault_keys.json
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-        Path("data/vault_keys.json")
-    ]
-    
-    vault_keys_path = None
-    for path in vault_keys_paths:
-        if path.exists():
-            vault_keys_path = path
-            break
-    
-    if not vault_keys_path:
-        return VaultKeysFileStatusResponse(
-            exists=False,
-            key_count=0,
-            message="vault_keys.json does not exist. Create it to enable local auto-unseal."
-        )
-    
-    try:
-        with open(vault_keys_path, 'r') as f:
-            keys_data = json.load(f)
-        
-        keys = keys_data.get('keys', [])
-        if not keys:
-            return VaultKeysFileStatusResponse(
-                exists=True,
-                key_count=0,
-                message="vault_keys.json exists but contains no keys."
-            )
-        
-        return VaultKeysFileStatusResponse(
-            exists=True,
-            key_count=len(keys),
-            message=f"vault_keys.json contains {len(keys)} unseal keys."
-        )
-    except json.JSONDecodeError:
-        return VaultKeysFileStatusResponse(
-            exists=True,
-            key_count=0,
-            message="vault_keys.json exists but is not valid JSON."
-        )
-    except Exception as e:
-        return VaultKeysFileStatusResponse(
-            exists=True,
-            key_count=0,
-            message=f"Error reading vault_keys.json: {str(e)}"
-        )
-
-
-@router.post("/config/vault/keys-file", status_code=status.HTTP_201_CREATED)
-def create_vault_keys_file(
-    request: CreateVaultKeysFileRequest,
-    current_user = Depends(require_admin)
-):
-    """
-    Create vault_keys.json for local auto-unseal.
-    
-    This stores the unseal keys in a JSON file for automatic unsealing.
-    
-    WARNING: This stores sensitive cryptographic keys on disk.
-    Only use in dev/test environments or isolated home labs with physical security.
-    For production, use KMS-based auto-unseal.
-    """
-    import json
-    from pathlib import Path
-    
-    if not request.keys or len(request.keys) < 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one unseal key is required"
-        )
-    
-    # Validate keys look reasonable (base64 or hex)
-    for i, key in enumerate(request.keys):
-        if not key or len(key) < 20:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Key {i+1} appears to be invalid or too short"
-            )
-    
-    # Use mounted volume path for persistence
-    vault_keys_path = Path("/app/vault_data/vault_keys.json")
-    
-    # Ensure directory exists
-    vault_keys_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    keys_data = {
-        "keys": request.keys,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "created_by": "scr-pki-web-ui"
-    }
-    
-    try:
-        with open(vault_keys_path, 'w') as f:
-            json.dump(keys_data, f, indent=2)
-        
-        # Set restrictive permissions (600)
-        os.chmod(vault_keys_path, 0o600)
-        
-        logger.info("Created vault_keys.json for local auto-unseal", key_count=len(request.keys))
-        
-        return {
-            "message": f"vault_keys.json created with {len(request.keys)} keys",
-            "key_count": len(request.keys),
-            "warning": "This file contains sensitive cryptographic keys. Only use in dev/test environments."
-        }
-    except Exception as e:
-        logger.error("Failed to create vault_keys.json", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create vault_keys.json: {str(e)}"
-        )
-
-
-@router.delete("/config/vault/keys-file", status_code=status.HTTP_200_OK)
-def delete_vault_keys_file(
-    current_user = Depends(require_admin)
-):
-    """
-    Delete vault_keys.json to disable local auto-unseal.
-    """
-    from pathlib import Path
-    
-    # Check multiple paths
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-        Path("data/vault_keys.json")
-    ]
-    
-    deleted = False
-    for vault_keys_path in vault_keys_paths:
-        if vault_keys_path.exists():
-            try:
-                vault_keys_path.unlink()
-                logger.info("Deleted vault_keys.json", path=str(vault_keys_path))
-                deleted = True
-            except Exception as e:
-                logger.error("Failed to delete vault_keys.json", path=str(vault_keys_path), error=str(e))
-    
-    if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="vault_keys.json does not exist"
-        )
-    
-    return {"message": "vault_keys.json deleted. Local auto-unseal is now disabled."}
+# ============================================================================
+# Store Unseal Keys Endpoint
+# ============================================================================
 
 
 # =============================================================================
@@ -965,32 +739,14 @@ def get_unseal_priority(
     The system will try each method in order until one succeeds.
     """
     import json
-    from pathlib import Path
     from app.core.security import decrypt_value
+    from app.core.auto_unseal import auto_unseal_manager
     
-    methods = []
+    # Get providers that have wrapped DEKs (can actually auto-unseal)
+    auto_unseal_providers = auto_unseal_manager.get_available_providers(db)
     
-    # Check local keys file
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-    ]
-    
-    local_file_configured = False
-    local_file_key_count = 0
-    for path in vault_keys_paths:
-        if path.exists():
-            try:
-                with open(path, 'r') as f:
-                    keys_data = json.load(f)
-                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                if keys:
-                    local_file_configured = True
-                    local_file_key_count = len(keys)
-                    break
-            except:
-                pass
+    # Check if local DEK exists (local_file = envelope encryption with local Fernet)
+    local_file_configured = 'local' in auto_unseal_providers
     
     # Get priority order from database (or use default)
     priority_config = db.query(SystemConfig).filter(SystemConfig.key == "unseal_priority").first()
@@ -1030,14 +786,10 @@ def get_unseal_priority(
             except:
                 pass
     
-    # Get providers that have wrapped DEKs (can actually auto-unseal)
-    from app.core.auto_unseal import auto_unseal_manager
-    auto_unseal_providers = auto_unseal_manager.get_available_providers(db)
-    
     # Build method list in priority order
     methods = []
     
-    # Add local file first if configured
+    # Add local file first if configured (local = envelope encryption with local Fernet DEK)
     if "local_file" in priority_order:
         priority = priority_order.index("local_file")
     else:
@@ -1048,7 +800,7 @@ def get_unseal_priority(
         configured=local_file_configured,
         enabled=local_file_configured,
         priority=priority,
-        details=f"{local_file_key_count} keys stored" if local_file_configured else "Not configured"
+        details="Database (local encryption) ✓ Ready" if local_file_configured else "Not configured"
     ))
     
     # Add KMS providers
@@ -1284,6 +1036,7 @@ def wrap_dek_with_additional_provider(
     This adds redundancy by allowing the DEK to be unwrapped
     by multiple KMS providers.
     """
+    import json
     from app.core.auto_unseal import auto_unseal_manager
     from app.core.security import decrypt_value
     
@@ -1453,7 +1206,7 @@ def remove_provider_from_auto_unseal(
 # =============================================================================
 
 class KeyReplicationSource(str, Enum):
-    LOCAL_FILE = "local_file"  # vault_keys.json
+    LOCAL_FILE = "local_file"  # Local DEK (envelope encryption)
     MANUAL = "manual"  # User provides keys directly
     SHAMIR = "shamir"  # Same as manual, user provides Shamir keys
 
@@ -1503,30 +1256,21 @@ def replicate_unseal_keys(
     unseal_keys = []
     
     if request.source == KeyReplicationSource.LOCAL_FILE:
-        # Read from vault_keys.json
-        vault_keys_paths = [
-            Path("/app/vault_data/vault_keys.json"),
-            Path("/app/data/vault/vault_keys.json"),
-            Path("/app/data/vault_keys.json"),
-            Path("data/vault/vault_keys.json"),
-        ]
+        # Read from envelope encryption (local DEK)
+        from app.core.auto_unseal import auto_unseal_manager
         
-        for path in vault_keys_paths:
-            if path.exists():
-                try:
-                    with open(path, 'r') as f:
-                        keys_data = json.load(f)
-                    unseal_keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                    if unseal_keys:
-                        logger.info(f"Found {len(unseal_keys)} keys in {path}")
-                        break
-                except Exception as e:
-                    logger.warning(f"Failed to read {path}: {e}")
+        unseal_keys, error = auto_unseal_manager.retrieve_unseal_keys(db, "local")
+        if error:
+            return KeyReplicationResponse(
+                success=False,
+                message=f"Failed to retrieve keys from local DEK: {error}",
+                destination=request.destination
+            )
         
         if not unseal_keys:
             return KeyReplicationResponse(
                 success=False,
-                message="No vault_keys.json found or it contains no keys",
+                message="No unseal keys found in local DEK storage",
                 destination=request.destination
             )
     
@@ -2101,32 +1845,14 @@ def get_key_replication_status(
     Get the status of key replications to various KMS providers.
     """
     import json
-    from pathlib import Path
+    from app.core.auto_unseal import auto_unseal_manager
     
     replications = []
     
-    # Check local keys
-    has_local_keys = False
-    local_key_count = 0
-    vault_keys_paths = [
-        Path("/app/vault_data/vault_keys.json"),
-        Path("/app/data/vault/vault_keys.json"),
-        Path("/app/data/vault_keys.json"),
-        Path("data/vault/vault_keys.json"),
-    ]
-    
-    for path in vault_keys_paths:
-        if path.exists():
-            try:
-                with open(path, 'r') as f:
-                    keys_data = json.load(f)
-                keys = keys_data.get('keys', []) or keys_data.get('unseal_keys', [])
-                if keys:
-                    has_local_keys = True
-                    local_key_count = len(keys)
-                    break
-            except:
-                pass
+    # Check local keys (envelope encryption with local DEK)
+    auto_unseal_providers = auto_unseal_manager.get_available_providers(db)
+    has_local_keys = 'local' in auto_unseal_providers
+    local_key_count = 5 if has_local_keys else 0  # Standard 5 Shamir keys
     
     # Check for replicated keys in database
     providers = ["awskms", "gcpckms", "azurekeyvault", "ocikms", "alicloudkms", "transit"]
@@ -3148,28 +2874,19 @@ def perform_seal_migration(
                 )
             steps_completed.append("Seal configuration file verified")
             
-            # Step 2: Check if we have unseal keys (from request or vault_keys.json)
+            # Step 2: Check if we have unseal keys (from request or envelope encryption)
             unseal_keys = request.unseal_keys
             if not unseal_keys:
-                # Try to load from vault_keys.json
-                keys_paths = [
-                    Path("/app/data/vault/vault_keys.json"),
-                    Path("data/vault/vault_keys.json")
-                ]
-                for keys_path in keys_paths:
-                    if keys_path.exists():
-                        import json
-                        with open(keys_path, 'r') as f:
-                            keys_data = json.load(f)
-                            unseal_keys = keys_data.get('unseal_keys', []) or keys_data.get('keys', [])
-                            if unseal_keys:
-                                steps_completed.append(f"Loaded unseal keys from {keys_path}")
-                                break
+                # Try to load from envelope encryption (local DEK)
+                from app.core.auto_unseal import auto_unseal_manager
+                unseal_keys, error = auto_unseal_manager.retrieve_unseal_keys(db, "local")
+                if unseal_keys:
+                    steps_completed.append("Loaded unseal keys from envelope encryption")
             
             if not unseal_keys:
                 return SealMigrationResponse(
                     success=False,
-                    message="No unseal keys provided and vault_keys.json not found. Provide unseal keys to migrate.",
+                    message="No unseal keys provided and none found in storage. Provide unseal keys to migrate.",
                     status="keys_required",
                     docker_available=True,
                     steps_completed=steps_completed,
