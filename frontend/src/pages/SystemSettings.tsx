@@ -2164,9 +2164,9 @@ const SystemSettings: React.FC = () => {
                           {editingProvider === 'shamir' && (
                             <div className="p-4 bg-gray-50 rounded-md">
                               <p className="text-sm text-gray-600">
-                                With manual (Shamir) unsealing, you'll need to provide 3 of 5 unseal keys 
-                                each time Vault restarts. This is the default and most secure option if 
-                                you have reliable access to your unseal keys.
+                                With manual (Shamir) unsealing, you'll need to provide at least 3 of 5 unseal keys 
+                                each time Vault restarts. Any 3 keys from the original 5 will work. 
+                                This is the default and most secure option if you have reliable access to your unseal keys.
                               </p>
                             </div>
                           )}
@@ -2413,32 +2413,30 @@ const SystemSettings: React.FC = () => {
                               </div>
                             )}
 
-                            {/* Test Auto-Unseal Section - Only show when vault is unsealed and auto-unseal is available */}
-                            {autoUnsealStatus?.available && healthData && !healthData.vault_sealed && (
-                              <div className="p-4 bg-purple-50 border border-purple-200 rounded-md">
-                                <h5 className="text-sm font-medium text-purple-800 mb-2">
-                                  <TestTube className="h-4 w-4 inline mr-1" />
-                                  Test Auto-Unseal
+                            {/* Seal Vault Section - Only show when vault is unsealed */}
+                            {healthData && !healthData.vault_sealed && healthData.vault_initialized && (
+                              <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+                                <h5 className="text-sm font-medium text-red-800 mb-2">
+                                  <Lock className="h-4 w-4 inline mr-1" />
+                                  Seal Vault
                                 </h5>
-                                <p className="text-xs text-purple-700 mb-3">
-                                  Seal the Vault, then test auto-unseal. Use the priority order above to control which method is tested first.
+                                <p className="text-xs text-red-700 mb-3">
+                                  Sealing the Vault will make all cryptographic operations unavailable until it is unsealed again.
+                                  {autoUnsealStatus?.available && ' You can use the auto-unseal configuration above to unseal after sealing.'}
                                 </p>
-                                <div className="flex items-center gap-3">
-                                  <button
-                                    type="button"
-                                    onClick={handleSealVault}
-                                    disabled={sealLoading}
-                                    className="inline-flex items-center px-3 py-1.5 border border-purple-300 text-sm font-medium rounded-md text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50"
-                                  >
-                                    {sealLoading ? (
-                                      <RefreshCw className="h-4 w-4 animate-spin mr-1" />
-                                    ) : (
-                                      <Lock className="h-4 w-4 mr-1" />
-                                    )}
-                                    Seal Vault
-                                  </button>
-                                  <span className="text-xs text-purple-600">→ Then use the Unseal button in System Health above</span>
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleSealVault}
+                                  disabled={sealLoading}
+                                  className="inline-flex items-center px-3 py-1.5 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
+                                >
+                                  {sealLoading ? (
+                                    <RefreshCw className="h-4 w-4 animate-spin mr-1" />
+                                  ) : (
+                                    <Lock className="h-4 w-4 mr-1" />
+                                  )}
+                                  Seal Vault
+                                </button>
                               </div>
                             )}
 
@@ -2673,40 +2671,23 @@ const SystemSettings: React.FC = () => {
                             <><Unlock className="h-5 w-5 text-green-500 mr-2" /> Unsealed</>
                           )}
                         </span>
-                        {/* Seal/Unseal buttons */}
-                        {healthData.vault_initialized && healthData.vault_connected && (
+                        {/* Unseal button - Seal is in the Vault tab */}
+                        {healthData.vault_initialized && healthData.vault_connected && healthData.vault_sealed && (
                           <div className="ml-4">
-                            {healthData.vault_sealed ? (
-                              <button
-                                type="button"
-                                onClick={handleAutoUnseal}
-                                disabled={autoUnsealLoading || !autoUnsealStatus?.available}
-                                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-green-700 bg-green-100 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                title={autoUnsealStatus?.available ? 'Unseal Vault' : 'No auto-unseal method available'}
-                              >
-                                {autoUnsealLoading ? (
-                                  <RefreshCw className="h-3 w-3 animate-spin mr-1" />
-                                ) : (
-                                  <Unlock className="h-3 w-3 mr-1" />
-                                )}
-                                Unseal
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={handleSealVault}
-                                disabled={sealLoading}
-                                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 disabled:opacity-50"
-                                title="Seal Vault for testing or security"
-                              >
-                                {sealLoading ? (
-                                  <RefreshCw className="h-3 w-3 animate-spin mr-1" />
-                                ) : (
-                                  <Lock className="h-3 w-3 mr-1" />
-                                )}
-                                Seal
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={handleAutoUnseal}
+                              disabled={autoUnsealLoading || !autoUnsealStatus?.available}
+                              className="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-green-700 bg-green-100 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={autoUnsealStatus?.available ? 'Unseal Vault' : 'No auto-unseal method available'}
+                            >
+                              {autoUnsealLoading ? (
+                                <RefreshCw className="h-3 w-3 animate-spin mr-1" />
+                              ) : (
+                                <Unlock className="h-3 w-3 mr-1" />
+                              )}
+                              Unseal
+                            </button>
                           </div>
                         )}
                       </div>

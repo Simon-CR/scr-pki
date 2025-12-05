@@ -353,18 +353,23 @@ def check_system_health(
     except Exception as e:
         logger.error("Health check failed to contact Vault", error=str(e))
     
-    if not health.vault_connected:
-        return health
-
-    # Check Integrity
+    # Always get database counts regardless of Vault status
     from app.models.certificate import Certificate
     from app.models.ca import CertificateAuthority
     
+    cas = db.query(CertificateAuthority).all()
+    health.total_cas = len(cas)
+    certs = db.query(Certificate).all()
+    health.total_certificates = len(certs)
+    
+    # Skip integrity checks if vault not connected or sealed
+    if not health.vault_connected or health.vault_sealed:
+        return health
+
+    # Check Integrity
     expected_paths = set()
 
     # Check CAs
-    cas = db.query(CertificateAuthority).all()
-    health.total_cas = len(cas)
     for ca in cas:
         if ca.private_key_vault_path:
             expected_paths.add(ca.private_key_vault_path)
@@ -375,8 +380,6 @@ def check_system_health(
                 health.missing_keys.append(f"CA: {ca.common_name} (ID: {ca.id})")
     
     # Check Certificates
-    certs = db.query(Certificate).all()
-    health.total_certificates = len(certs)
     for cert in certs:
         if cert.pem_private_key_vault_path:
             expected_paths.add(cert.pem_private_key_vault_path)
@@ -844,7 +847,7 @@ def get_unseal_priority(
         configured=True,  # Always available
         enabled=True,     # Always enabled as fallback
         priority=shamir_priority,
-        details="Manual Unseal - Use 3 of 5 Shamir keys"
+        details="Manual Unseal - Requires 3 of 5 keys to unseal"
     ))
     
     # Sort by priority
