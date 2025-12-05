@@ -298,7 +298,7 @@ class AutoUnsealKeyManager:
             from app.core.security import decrypt_value
             
             project = kms_config.get('project')
-            location = kms_config.get('location')
+            location = kms_config.get('location') or kms_config.get('region')
             key_ring = kms_config.get('key_ring')
             crypto_key = kms_config.get('crypto_key')
             credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
@@ -348,7 +348,7 @@ class AutoUnsealKeyManager:
             from app.core.security import decrypt_value
             
             project = kms_config.get('project')
-            location = kms_config.get('location')
+            location = kms_config.get('location') or kms_config.get('region')
             key_ring = kms_config.get('key_ring')
             crypto_key = kms_config.get('crypto_key')
             credentials_json = kms_config.get('credentials') or kms_config.get('credentials_json')
