@@ -236,9 +236,8 @@ async def try_auto_unseal_vault():
                 logger.error("Vault remains sealed after using all available keys")
             else:
                 logger.info(f"Vault auto-unsealed successfully on startup via {method_used}")
-            
-    except Exception as e:
-        logger.error(f"Auto-unseal failed: {e}")
+        except Exception as e:
+            logger.error(f"Auto-unseal failed: {e}")
 
 
 # Create FastAPI application
