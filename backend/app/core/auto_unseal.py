@@ -674,7 +674,7 @@ class AutoUnsealKeyManager:
         Returns:
             True if successful
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         
         try:
             # Encrypt unseal keys with DEK
@@ -732,7 +732,7 @@ class AutoUnsealKeyManager:
         
         WARNING: This is less secure - use only when no KMS is available.
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         from app.core.security import encrypt_value
         
         try:
@@ -772,7 +772,7 @@ class AutoUnsealKeyManager:
         """
         Get the encrypted unseal keys blob from database.
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         
         config = db.query(SystemConfig).filter(
             SystemConfig.key == self.DB_KEY_ENCRYPTED_UNSEAL_KEYS
@@ -790,7 +790,7 @@ class AutoUnsealKeyManager:
         """
         Get the wrapped DEK for a specific provider.
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         
         dek_key = f"{self.DB_KEY_WRAPPED_DEK_PREFIX}{provider}"
         config = db.query(SystemConfig).filter(
@@ -809,7 +809,7 @@ class AutoUnsealKeyManager:
         """
         Get the locally stored DEK.
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         from app.core.security import decrypt_value
         
         config = db.query(SystemConfig).filter(
@@ -831,7 +831,7 @@ class AutoUnsealKeyManager:
         """
         Get list of providers that have wrapped DEKs stored.
         """
-        from app.models.ca import SystemConfig
+        from app.models.system import SystemConfig
         
         providers = []
         provider_list = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
