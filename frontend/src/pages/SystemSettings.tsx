@@ -2295,20 +2295,20 @@ const SystemSettings: React.FC = () => {
                           <div className="border-t pt-4">
                             <div className="flex items-center mb-3">
                               <Lock className="h-5 w-5 text-green-500 mr-2" />
-                              <h4 className="text-sm font-medium text-gray-900">Store Unseal Keys (Secure Auto-Unseal)</h4>
+                              <h4 className="text-sm font-medium text-gray-900">Secure Auto-Unseal</h4>
                             </div>
                             <p className="text-xs text-gray-500 mb-4">
-                              Store your Vault unseal keys encrypted in the database. Keys are protected with envelope encryption:
-                              a Data Encryption Key (DEK) encrypts the keys, and the DEK is wrapped by your configured KMS providers.
+                              Your Vault unseal keys are encrypted with envelope encryption: a Data Encryption Key (DEK) 
+                              encrypts the keys, and the DEK is wrapped by your configured KMS providers.
                             </p>
 
-                            {/* Current Status */}
+                            {/* Current Status - Keys Already Stored */}
                             {autoUnsealStatus && autoUnsealStatus.available && (
                               <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
                                 <div className="flex items-center">
                                   <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
                                   <div>
-                                    <p className="text-sm font-medium text-green-800">Auto-Unseal Configured</p>
+                                    <p className="text-sm font-medium text-green-800">Auto-Unseal Active</p>
                                     <p className="text-xs text-green-700">{autoUnsealStatus.message}</p>
                                   </div>
                                 </div>
@@ -2316,7 +2316,12 @@ const SystemSettings: React.FC = () => {
                                   <div className="mt-2 flex flex-wrap gap-1">
                                     {autoUnsealStatus.methods.map((method: string, idx: number) => (
                                       <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                        {method.toUpperCase()}
+                                        {method === 'local' ? 'LOCAL' :
+                                         method === 'ocikms' ? 'OCI KMS' :
+                                         method === 'gcpckms' ? 'GCP KMS' :
+                                         method === 'awskms' ? 'AWS KMS' :
+                                         method === 'azurekeyvault' ? 'AZURE' :
+                                         method.toUpperCase()}
                                         <CheckCircle className="h-3 w-3 ml-1" />
                                       </span>
                                     ))}
@@ -2325,110 +2330,17 @@ const SystemSettings: React.FC = () => {
                               </div>
                             )}
 
-                            {/* Store Keys Form */}
-                            <div className="space-y-4 p-4 bg-gray-50 rounded-md">
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Unseal Keys</label>
-                                <p className="text-xs text-gray-500 mb-2">Enter all 5 unseal keys from your Vault initialization</p>
-                                <div className="space-y-2">
-                                  {storeKeysInput.map((key, idx) => (
-                                    <input
-                                      key={idx}
-                                      type="password"
-                                      value={key}
-                                      onChange={(e) => {
-                                        const newKeys = [...storeKeysInput]
-                                        newKeys[idx] = e.target.value
-                                        setStoreKeysInput(newKeys)
-                                      }}
-                                      placeholder={`Unseal Key ${idx + 1}`}
-                                      className="w-full px-3 py-2 text-sm border rounded-md font-mono"
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* KMS Provider Selection */}
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Wrap DEK with Providers</label>
-                                <p className="text-xs text-gray-500 mb-2">Select which KMS providers to use for wrapping the encryption key</p>
-                                <div className="space-y-2">
-                                  <label className="flex items-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={storeKeysProviders.includes('local')}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setStoreKeysProviders([...storeKeysProviders, 'local'])
-                                        } else {
-                                          setStoreKeysProviders(storeKeysProviders.filter(p => p !== 'local'))
-                                        }
-                                      }}
-                                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                                    />
-                                    <span className="ml-2 text-sm text-gray-700">Local (Fernet) - Always recommended as fallback</span>
-                                  </label>
-                                  {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').map(m => (
-                                    <label key={m.method} className="flex items-center">
-                                      <input
-                                        type="checkbox"
-                                        checked={storeKeysProviders.includes(m.method)}
-                                        onChange={(e) => {
-                                          if (e.target.checked) {
-                                            setStoreKeysProviders([...storeKeysProviders, m.method])
-                                          } else {
-                                            setStoreKeysProviders(storeKeysProviders.filter(p => p !== m.method))
-                                          }
-                                        }}
-                                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                                      />
-                                      <span className="ml-2 text-sm text-gray-700">
-                                        {m.method === 'ocikms' ? 'OCI KMS' :
-                                         m.method === 'gcpckms' ? 'GCP Cloud KMS' :
-                                         m.method === 'awskms' ? 'AWS KMS' :
-                                         m.method === 'azurekeyvault' ? 'Azure Key Vault' :
-                                         m.method === 'transit' ? 'Vault Transit' :
-                                         m.method.toUpperCase()}
-                                      </span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* Store Button */}
-                              <div className="flex items-center space-x-3 pt-2">
-                                <button
-                                  type="button"
-                                  onClick={handleStoreUnsealKeys}
-                                  disabled={storeKeysLoading || storeKeysInput.filter(k => k.trim()).length < 3 || storeKeysProviders.length === 0}
-                                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {storeKeysLoading ? (
-                                    <>
-                                      <RefreshCw className="animate-spin h-4 w-4 mr-2" />
-                                      Storing...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Lock className="h-4 w-4 mr-2" />
-                                      Store Unseal Keys
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Add Additional Provider Section */}
-                            {autoUnsealStatus?.available && (
-                              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
-                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add Redundancy</h5>
+                            {/* Add Additional Provider Section - Only show when keys are already stored */}
+                            {autoUnsealStatus?.available && autoUnsealStatus.encrypted_keys_stored && (
+                              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                                <h5 className="text-sm font-medium text-blue-800 mb-2">Add KMS Provider</h5>
                                 <p className="text-xs text-blue-700 mb-3">
-                                  Wrap the existing DEK with additional KMS providers for redundancy.
+                                  Add additional KMS providers for redundancy. No need to re-enter keys.
                                 </p>
                                 <div className="flex flex-wrap gap-2">
                                   {unsealMethods
                                     .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
-                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method))
+                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
                                     .map(m => (
                                       <button
                                         key={m.method}
@@ -2442,193 +2354,125 @@ const SystemSettings: React.FC = () => {
                                         ) : (
                                           <Zap className="h-3 w-3 mr-1" />
                                         )}
-                                        Add {m.method.toUpperCase()}
+                                        Add {m.method === 'ocikms' ? 'OCI KMS' :
+                                             m.method === 'gcpckms' ? 'GCP KMS' :
+                                             m.method === 'awskms' ? 'AWS KMS' :
+                                             m.method === 'azurekeyvault' ? 'Azure' :
+                                             m.method.toUpperCase()}
                                       </button>
                                     ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Key Replication Section */}
-                          <div className="border-t pt-4">
-                            <div className="flex items-center mb-3">
-                              <Archive className="h-5 w-5 text-purple-500 mr-2" />
-                              <h4 className="text-sm font-medium text-gray-900">Key Replication (Legacy Backup)</h4>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-4">
-                              Replicate your Vault unseal keys to a configured KMS provider for redundancy and disaster recovery.
-                            </p>
-
-                            {/* Replication Status */}
-                            {replicationStatus && (
-                              <div className="mb-4 p-3 bg-gray-50 rounded-md">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-sm font-medium text-gray-700">Current Status</span>
-                                  <button
-                                    type="button"
-                                    onClick={loadReplicationStatus}
-                                    className="text-xs text-blue-600 hover:text-blue-800"
-                                  >
-                                    <RefreshCw className="h-3 w-3 inline mr-1" />
-                                    Refresh
-                                  </button>
-                                </div>
-                                <div className="space-y-1 text-xs">
-                                  <p>
-                                    <span className={replicationStatus.has_local_keys ? 'text-green-600' : 'text-yellow-600'}>
-                                      {replicationStatus.has_local_keys 
-                                        ? `✅ Local keys: ${replicationStatus.local_key_count} keys available` 
-                                        : '⚠️ No local keys file found'}
-                                    </span>
-                                  </p>
-                                  {replicationStatus.replications.length > 0 ? (
-                                    <div className="mt-2">
-                                      <p className="font-medium text-gray-600 mb-1">Replicated to:</p>
-                                      {replicationStatus.replications.map((r, idx) => (
-                                        <p key={idx} className="flex items-center text-gray-600">
-                                          {r.status === 'replicated' ? (
-                                            <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
-                                          ) : (
-                                            <AlertTriangle className="h-3 w-3 text-yellow-500 mr-1" />
-                                          )}
-                                          <span className="font-medium">{r.destination.toUpperCase()}</span>
-                                          {r.replicated_at && (
-                                            <span className="ml-2 text-gray-400">
-                                              {new Date(r.replicated_at).toLocaleDateString()}
-                                            </span>
-                                          )}
-                                        </p>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <p className="text-gray-500 mt-1">No replications configured yet</p>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Replication Form */}
-                            <div className="space-y-4">
-                              {/* Source Selection */}
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Source</label>
-                                <div className="flex space-x-4">
-                                  <label className="inline-flex items-center">
-                                    <input
-                                      type="radio"
-                                      name="replicationSource"
-                                      value="local_file"
-                                      checked={replicationSource === 'local_file'}
-                                      onChange={(e) => setReplicationSource(e.target.value as 'local_file' | 'manual')}
-                                      className="form-radio h-4 w-4 text-indigo-600"
-                                    />
-                                    <span className="ml-2 text-sm text-gray-700">
-                                      Local Keys File
-                                      {replicationStatus?.has_local_keys && (
-                                        <span className="ml-1 text-green-600">
-                                          ({replicationStatus.local_key_count} keys)
-                                        </span>
-                                      )}
-                                    </span>
-                                  </label>
-                                  <label className="inline-flex items-center">
-                                    <input
-                                      type="radio"
-                                      name="replicationSource"
-                                      value="manual"
-                                      checked={replicationSource === 'manual'}
-                                      onChange={(e) => setReplicationSource(e.target.value as 'local_file' | 'manual')}
-                                      className="form-radio h-4 w-4 text-indigo-600"
-                                    />
-                                    <span className="ml-2 text-sm text-gray-700">Enter Keys Manually</span>
-                                  </label>
-                                </div>
-                              </div>
-
-                              {/* Manual Keys Input */}
-                              {replicationSource === 'manual' && (
-                                <div className="space-y-2">
-                                  <label className="block text-sm font-medium text-gray-700">Unseal Keys</label>
-                                  {replicationKeys.map((key, idx) => (
-                                    <input
-                                      key={idx}
-                                      type="password"
-                                      value={key}
-                                      onChange={(e) => {
-                                        const newKeys = [...replicationKeys]
-                                        newKeys[idx] = e.target.value
-                                        setReplicationKeys(newKeys)
-                                      }}
-                                      placeholder={`Unseal Key ${idx + 1}`}
-                                      className="w-full px-3 py-2 text-sm border rounded-md font-mono"
-                                    />
-                                  ))}
-                                  <button
-                                    type="button"
-                                    onClick={() => setReplicationKeys([...replicationKeys, ''])}
-                                    className="text-xs text-indigo-600 hover:text-indigo-800"
-                                  >
-                                    + Add another key
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Destination Selection */}
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Destination</label>
-                                <select
-                                  value={replicationDestination}
-                                  onChange={(e) => setReplicationDestination(e.target.value)}
-                                  className="w-full px-3 py-2 border rounded-md text-sm"
-                                >
-                                  <option value="">Select a destination...</option>
                                   {unsealMethods
                                     .filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir')
-                                    .map(m => (
-                                      <option key={m.method} value={m.method}>
-                                        {m.method === 'awskms' ? 'AWS Secrets Manager' :
-                                         m.method === 'gcpckms' ? 'GCP Secret Manager' :
-                                         m.method === 'azurekeyvault' ? 'Azure Key Vault' :
-                                         m.method === 'ocikms' ? 'OCI Vault' :
-                                         m.method === 'alicloudkms' ? 'AliCloud KMS' :
-                                         m.method === 'transit' ? 'Vault Transit' :
-                                         m.method.toUpperCase()}
-                                      </option>
-                                    ))}
-                                </select>
-                                {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').length === 0 && (
-                                  <p className="mt-1 text-xs text-yellow-600">
-                                    ⚠️ No KMS providers configured. Configure a provider above first.
-                                  </p>
-                                )}
+                                    .filter(m => !autoUnsealStatus.methods?.includes(m.method) && m.method !== 'local')
+                                    .length === 0 && (
+                                      <p className="text-xs text-blue-600">
+                                        All configured providers are already wrapping the DEK ✓
+                                      </p>
+                                    )}
+                                </div>
                               </div>
+                            )}
 
-                              {/* Replicate Button */}
-                              <div className="flex items-center space-x-3">
-                                <button
-                                  type="button"
-                                  onClick={handleReplicateKeys}
-                                  disabled={replicationLoading || !replicationDestination || (replicationSource === 'local_file' && !replicationStatus?.has_local_keys)}
-                                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {replicationLoading ? (
-                                    <>
-                                      <RefreshCw className="animate-spin h-4 w-4 mr-2" />
-                                      Replicating...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ArrowRight className="h-4 w-4 mr-2" />
-                                      Replicate Keys
-                                    </>
-                                  )}
-                                </button>
-                                <span className="text-xs text-gray-500">
-                                  Keys will be encrypted at rest in the destination
-                                </span>
+                            {/* Store Keys Form - Only show if NO keys are stored yet */}
+                            {(!autoUnsealStatus?.available || !autoUnsealStatus.encrypted_keys_stored) && (
+                              <div className="space-y-4 p-4 bg-gray-50 rounded-md">
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md mb-4">
+                                  <p className="text-sm text-yellow-800">
+                                    <AlertTriangle className="h-4 w-4 inline mr-1" />
+                                    No unseal keys stored. Enter your keys below to enable auto-unseal.
+                                  </p>
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Unseal Keys</label>
+                                  <p className="text-xs text-gray-500 mb-2">Enter all 5 unseal keys from your Vault initialization</p>
+                                  <div className="space-y-2">
+                                    {storeKeysInput.map((key, idx) => (
+                                      <input
+                                        key={idx}
+                                        type="password"
+                                        value={key}
+                                        onChange={(e) => {
+                                          const newKeys = [...storeKeysInput]
+                                          newKeys[idx] = e.target.value
+                                          setStoreKeysInput(newKeys)
+                                        }}
+                                        placeholder={`Unseal Key ${idx + 1}`}
+                                        className="w-full px-3 py-2 text-sm border rounded-md font-mono"
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* KMS Provider Selection */}
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Wrap DEK with Providers</label>
+                                  <p className="text-xs text-gray-500 mb-2">Select which KMS providers to use for wrapping the encryption key</p>
+                                  <div className="space-y-2">
+                                    <label className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={storeKeysProviders.includes('local')}
+                                        onChange={(e) => {
+                                          if (e.target.checked) {
+                                            setStoreKeysProviders([...storeKeysProviders, 'local'])
+                                          } else {
+                                            setStoreKeysProviders(storeKeysProviders.filter(p => p !== 'local'))
+                                          }
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                      />
+                                      <span className="ml-2 text-sm text-gray-700">Local (Fernet) - Always recommended as fallback</span>
+                                    </label>
+                                    {unsealMethods.filter(m => m.configured && m.method !== 'local_file' && m.method !== 'shamir').map(m => (
+                                      <label key={m.method} className="flex items-center">
+                                        <input
+                                          type="checkbox"
+                                          checked={storeKeysProviders.includes(m.method)}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              setStoreKeysProviders([...storeKeysProviders, m.method])
+                                            } else {
+                                              setStoreKeysProviders(storeKeysProviders.filter(p => p !== m.method))
+                                            }
+                                          }}
+                                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                        />
+                                        <span className="ml-2 text-sm text-gray-700">
+                                          {m.method === 'ocikms' ? 'OCI KMS' :
+                                           m.method === 'gcpckms' ? 'GCP Cloud KMS' :
+                                           m.method === 'awskms' ? 'AWS KMS' :
+                                           m.method === 'azurekeyvault' ? 'Azure Key Vault' :
+                                           m.method === 'transit' ? 'Vault Transit' :
+                                           m.method.toUpperCase()}
+                                        </span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Store Button */}
+                                <div className="flex items-center space-x-3 pt-2">
+                                  <button
+                                    type="button"
+                                    onClick={handleStoreUnsealKeys}
+                                    disabled={storeKeysLoading || storeKeysInput.filter(k => k.trim()).length < 3 || storeKeysProviders.length === 0}
+                                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {storeKeysLoading ? (
+                                      <>
+                                        <RefreshCw className="animate-spin h-4 w-4 mr-2" />
+                                        Storing...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Lock className="h-4 w-4 mr-2" />
+                                        Store Unseal Keys
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
                         </div>
                       )}
