@@ -104,11 +104,11 @@ class AutoUnsealKeyManager:
             kms_config: OCI KMS configuration
             
         Returns:
-            Dict with wrapped_dek and metadata
+            Dict with wrapped_dek and metadata (including full config for later unwrapping)
         """
         try:
             import oci
-            from app.core.security import decrypt_value
+            from app.core.security import decrypt_value, encrypt_value
             
             key_id = kms_config.get('key_id') or kms_config.get('key_ocid')
             crypto_endpoint = kms_config.get('crypto_endpoint')
@@ -161,14 +161,30 @@ class AutoUnsealKeyManager:
                 )
             )
             
-            return {
+            # Build result with full config needed for unwrapping
+            result = {
                 "success": True,
                 "wrapped_dek": encrypt_response.data.ciphertext,
                 "key_id": key_id,
                 "crypto_endpoint": crypto_endpoint,
                 "provider": "ocikms",
-                "wrapped_at": datetime.now(timezone.utc).isoformat()
+                "wrapped_at": datetime.now(timezone.utc).isoformat(),
+                "use_instance_principal": use_instance_principal
             }
+            
+            # Store encrypted auth config for later unwrapping (if not using instance principal)
+            if not use_instance_principal:
+                auth_config = {
+                    "user_ocid": user_ocid,
+                    "fingerprint": fingerprint,
+                    "tenancy_ocid": tenancy_ocid,
+                    "region": region,
+                    "private_key": private_key  # Already decrypted
+                }
+                # Encrypt the auth config before storing
+                result["auth_config_encrypted"] = encrypt_value(json.dumps(auth_config))
+            
+            return result
             
         except Exception as e:
             logger.error(f"OCI KMS wrap failed: {e}")
@@ -180,7 +196,7 @@ class AutoUnsealKeyManager:
         
         Args:
             wrapped_dek: The wrapped DEK ciphertext
-            kms_config: OCI KMS configuration
+            kms_config: OCI KMS configuration (can include auth_config_encrypted from wrap result)
             
         Returns:
             The unwrapped DEK bytes, or None on failure
@@ -203,17 +219,46 @@ class AutoUnsealKeyManager:
                     {}, signer=signer, service_endpoint=crypto_endpoint
                 )
             else:
-                user_ocid = kms_config.get('auth_type_api_key_user_ocid') or kms_config.get('user_ocid')
-                fingerprint = kms_config.get('auth_type_api_key_fingerprint') or kms_config.get('fingerprint')
-                tenancy_ocid = kms_config.get('auth_type_api_key_tenancy_ocid') or kms_config.get('tenancy_ocid')
-                region = kms_config.get('auth_type_api_key_region') or kms_config.get('region')
-                private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
-                
-                if private_key:
+                # Try to get auth config from the wrapped DEK record first
+                auth_config_encrypted = kms_config.get('auth_config_encrypted')
+                if auth_config_encrypted:
                     try:
-                        private_key = decrypt_value(private_key)
-                    except:
-                        pass
+                        auth_config_json = decrypt_value(auth_config_encrypted)
+                        auth_config = json.loads(auth_config_json)
+                        user_ocid = auth_config.get('user_ocid')
+                        fingerprint = auth_config.get('fingerprint')
+                        tenancy_ocid = auth_config.get('tenancy_ocid')
+                        region = auth_config.get('region')
+                        private_key = auth_config.get('private_key')
+                    except Exception as e:
+                        logger.warning(f"Failed to decrypt stored auth config: {e}, falling back to kms_config")
+                        auth_config_encrypted = None
+                
+                if not auth_config_encrypted:
+                    # Fall back to reading from kms_config directly
+                    user_ocid = kms_config.get('auth_type_api_key_user_ocid') or kms_config.get('user_ocid')
+                    fingerprint = kms_config.get('auth_type_api_key_fingerprint') or kms_config.get('fingerprint')
+                    tenancy_ocid = kms_config.get('auth_type_api_key_tenancy_ocid') or kms_config.get('tenancy_ocid')
+                    region = kms_config.get('auth_type_api_key_region') or kms_config.get('region')
+                    private_key = kms_config.get('auth_type_api_key_private_key') or kms_config.get('private_key')
+                    
+                    if private_key:
+                        try:
+                            private_key = decrypt_value(private_key)
+                        except:
+                            pass
+                
+                # Validate we have all required fields
+                missing = []
+                if not user_ocid: missing.append("user")
+                if not tenancy_ocid: missing.append("tenancy")
+                if not region: missing.append("region")
+                if not fingerprint: missing.append("fingerprint")
+                if not private_key: missing.append("key_file")
+                
+                if missing:
+                    logger.error(f"OCI KMS unwrap failed: {{{', '.join([f'\"{m}\": \"missing\"' for m in missing])}}}")
+                    return None
                 
                 oci_config = {
                     "user": user_ocid,
