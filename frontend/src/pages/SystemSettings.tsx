@@ -45,7 +45,11 @@ const SystemSettings: React.FC = () => {
   
   // Seal Configuration State
   const [sealConfig, setSealConfig] = useState<SealConfigResponse | null>(null)
-  const [sealConfigExpanded, setSealConfigExpanded] = useState(false)
+  const [sealConfigExpanded, setSealConfigExpanded] = useState(() => {
+    // Restore expanded state from localStorage
+    const saved = localStorage.getItem('pki-seal-config-expanded')
+    return saved === 'true'
+  })
   const [sealProvider, setSealProvider] = useState<SealProvider>('shamir')
   const [sealConfigLoading, setSealConfigLoading] = useState(false)
   const [sealTestLoading, setSealTestLoading] = useState(false)
@@ -180,6 +184,34 @@ const SystemSettings: React.FC = () => {
     
     input.click()
   }
+
+  // Persist seal config expanded state to localStorage
+  useEffect(() => {
+    localStorage.setItem('pki-seal-config-expanded', String(sealConfigExpanded))
+  }, [sealConfigExpanded])
+
+  // Restore scroll position on page load
+  useEffect(() => {
+    const savedScrollPos = sessionStorage.getItem('pki-settings-scroll')
+    if (savedScrollPos) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        window.scrollTo(0, parseInt(savedScrollPos, 10))
+      })
+      // Clear after restoring
+      sessionStorage.removeItem('pki-settings-scroll')
+    }
+
+    // Save scroll position before unload
+    const handleBeforeUnload = () => {
+      sessionStorage.setItem('pki-settings-scroll', String(window.scrollY))
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [])
 
   useEffect(() => {
     // Check for tab query parameter
