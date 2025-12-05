@@ -965,6 +965,11 @@ class AutoUnsealKeyManager:
                 "vault_addr": dek_record.get("vault_addr"),
                 "vault_token": dek_record.get("vault_token"),
                 "transit_key": dek_record.get("transit_key"),
+                # OCI-specific
+                "auth_config_encrypted": dek_record.get("auth_config_encrypted"),
+                "use_instance_principal": dek_record.get("use_instance_principal"),
+                # GCP-specific  
+                "credentials_encrypted": dek_record.get("credentials_encrypted"),
             }
             # Override with provided config if any
             if kms_config:
