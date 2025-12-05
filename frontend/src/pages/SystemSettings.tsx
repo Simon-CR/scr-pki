@@ -73,6 +73,7 @@ const SystemSettings: React.FC = () => {
   const [storeKeysProviders, setStoreKeysProviders] = useState<string[]>(['local', 'ocikms'])
   const [storeKeysLoading, setStoreKeysLoading] = useState(false)
   const [wrapDekLoading, setWrapDekLoading] = useState<string | null>(null)
+  const [removeDekLoading, setRemoveDekLoading] = useState<string | null>(null)
   
   // Quick Import State for KMS configs
   const [ociConfigImport, setOciConfigImport] = useState('')
@@ -507,6 +508,36 @@ const SystemSettings: React.FC = () => {
       toast.error(error.response?.data?.detail || 'Failed to wrap DEK with provider')
     } finally {
       setWrapDekLoading(null)
+    }
+  }
+
+  const handleRemoveProviderFromAutoUnseal = async (provider: string) => {
+    const providerName = provider === 'local' ? 'Local DEK' :
+                         provider === 'ocikms' ? 'OCI KMS' :
+                         provider === 'gcpckms' ? 'GCP KMS' :
+                         provider === 'awskms' ? 'AWS KMS' :
+                         provider === 'azurekeyvault' ? 'Azure Key Vault' :
+                         provider.toUpperCase()
+
+    const confirmed = await confirm({
+      title: 'Remove Provider from Auto-Unseal',
+      message: `This will remove ${providerName} from auto-unseal. The provider's configuration will NOT be deleted - you can re-add it later using "Add KMS Provider".\n\nNote: At least one provider must remain for auto-unseal to work.`,
+      confirmLabel: 'Remove Provider',
+      variant: 'warning'
+    })
+    if (!confirmed) return
+
+    setRemoveDekLoading(provider)
+    try {
+      const response = await systemService.removeProviderFromAutoUnseal(provider)
+      if (response.success) {
+        toast.success(response.message)
+        await loadAutoUnsealStatus()
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to remove provider')
+    } finally {
+      setRemoveDekLoading(null)
     }
   }
 
@@ -1381,7 +1412,8 @@ const SystemSettings: React.FC = () => {
                                   'gcpckms': 'Google Cloud KMS',
                                   'azurekeyvault': 'Azure Key Vault',
                                   'ocikms': 'Oracle OCI KMS',
-                                  'alicloudkms': 'AliCloud KMS'
+                                  'alicloudkms': 'AliCloud KMS',
+                                  'shamir': 'Manual Unseal (Shamir Keys)'
                                 }
                                 
                                 return (
@@ -2268,18 +2300,37 @@ const SystemSettings: React.FC = () => {
                                   </div>
                                 </div>
                                 {autoUnsealStatus.methods && autoUnsealStatus.methods.length > 0 && (
-                                  <div className="mt-2 flex flex-wrap gap-1">
-                                    {autoUnsealStatus.methods.map((method: string, idx: number) => (
-                                      <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                                        {method === 'local' ? 'LOCAL' :
-                                         method === 'ocikms' ? 'OCI KMS' :
-                                         method === 'gcpckms' ? 'GCP KMS' :
-                                         method === 'awskms' ? 'AWS KMS' :
-                                         method === 'azurekeyvault' ? 'AZURE' :
-                                         method.toUpperCase()}
-                                        <CheckCircle className="h-3 w-3 ml-1" />
-                                      </span>
-                                    ))}
+                                  <div className="mt-3">
+                                    <p className="text-xs text-green-700 mb-2">Active Providers (click × to remove):</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {autoUnsealStatus.methods.map((method: string, idx: number) => (
+                                        <span key={idx} className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                                          {method === 'local' ? 'LOCAL' :
+                                           method === 'ocikms' ? 'OCI KMS' :
+                                           method === 'gcpckms' ? 'GCP KMS' :
+                                           method === 'awskms' ? 'AWS KMS' :
+                                           method === 'azurekeyvault' ? 'AZURE' :
+                                           method.toUpperCase()}
+                                          <CheckCircle className="h-3 w-3 ml-1" />
+                                          {/* Remove button - only show if more than 1 provider */}
+                                          {autoUnsealStatus.methods.length > 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveProviderFromAutoUnseal(method)}
+                                              disabled={removeDekLoading === method}
+                                              className="ml-1.5 text-green-600 hover:text-red-600 focus:outline-none"
+                                              title={`Remove ${method} from auto-unseal`}
+                                            >
+                                              {removeDekLoading === method ? (
+                                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                              ) : (
+                                                <XCircle className="h-3 w-3" />
+                                              )}
+                                            </button>
+                                          )}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
                               </div>

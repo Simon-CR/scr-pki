@@ -916,6 +916,42 @@ class AutoUnsealKeyManager:
         
         return providers
     
+    def remove_provider_from_auto_unseal(self, db, provider: str) -> Tuple[bool, str]:
+        """
+        Remove a provider from auto-unseal by deleting its wrapped DEK.
+        This does NOT delete the provider's configuration - only removes it from auto-unseal.
+        
+        Args:
+            db: Database session
+            provider: The provider to remove (e.g., 'ocikms', 'gcpckms', 'local')
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        from app.models.system import SystemConfig
+        
+        try:
+            if provider == "local":
+                dek_key = self.DB_KEY_LOCAL_DEK
+            else:
+                dek_key = f"{self.DB_KEY_WRAPPED_DEK_PREFIX}{provider}"
+            
+            config = db.query(SystemConfig).filter(SystemConfig.key == dek_key).first()
+            
+            if not config:
+                return False, f"Provider '{provider}' is not configured for auto-unseal"
+            
+            db.delete(config)
+            db.commit()
+            
+            logger.info(f"Removed provider '{provider}' from auto-unseal")
+            return True, f"Successfully removed '{provider}' from auto-unseal"
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to remove provider '{provider}' from auto-unseal: {e}")
+            return False, f"Failed to remove provider: {str(e)}"
+
     def retrieve_unseal_keys(
         self,
         db,

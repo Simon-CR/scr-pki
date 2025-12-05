@@ -302,6 +302,15 @@ export const systemService = {
     return api.post('/system/config/vault/wrap-dek-with-provider', { provider })
   },
 
+  // Remove a provider from auto-unseal (deletes wrapped DEK but keeps config)
+  removeProviderFromAutoUnseal: async (provider: string): Promise<{
+    success: boolean;
+    message: string;
+    remaining_providers: string[];
+  }> => {
+    return api.delete('/system/config/vault/auto-unseal-provider', { data: { provider } })
+  },
+
   resetSystem: async (includeConfig: boolean = false): Promise<{message: string}> => {
     return api.post<{message: string}>('/system/reset', null, { params: { include_config: includeConfig } })
   },

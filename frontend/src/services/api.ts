@@ -88,8 +88,8 @@ export const api = {
   patch: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> =>
     apiClient.patch(url, data, config).then(response => response.data),
 
-  delete: <T>(url: string): Promise<T> =>
-    apiClient.delete(url).then(response => response.data),
+  delete: <T>(url: string, config?: AxiosRequestConfig): Promise<T> =>
+    apiClient.delete(url, config).then(response => response.data),
 
   // Helper for form data uploads
   postFormData: <T>(url: string, formData: FormData): Promise<T> =>

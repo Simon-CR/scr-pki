@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.11] - 2025-12-05
+
+### Added
+- **Remove Provider from Auto-Unseal**: Added ability to remove KMS providers from auto-unseal without deleting their configuration
+  - New API endpoint `DELETE /config/vault/auto-unseal-provider` to remove wrapped DEK for a provider
+  - "×" button on each active provider badge to remove it from auto-unseal
+  - Confirmation dialog before removal with clear explanation
+  - Safety check prevents removing the last remaining provider
+  - Provider configuration is preserved so it can be re-added later
+
+### Fixed
+- **Shamir Priority Display**: Shamir (Manual Unseal) now properly displays in the unseal priority list
+  - Added "shamir" to the providerNames map with label "Manual Unseal (Shamir Keys)"
+  - Shamir can now be reordered in the priority list like other methods
+
+### Improved
+- **Auto-Unseal UI**: Enhanced the active providers display
+  - Clearer indication that clicking × removes a provider
+  - Shows provider count and allows removal when more than one exists
+  - Loading spinner when removal is in progress
+
 ## [0.2.10] - 2025-12-04
 
 ### Added

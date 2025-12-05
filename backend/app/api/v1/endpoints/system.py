@@ -1327,6 +1327,64 @@ def wrap_dek_with_additional_provider(
         )
 
 
+class RemoveProviderRequest(BaseModel):
+    provider: str
+
+
+@router.delete("/config/vault/auto-unseal-provider")
+def remove_provider_from_auto_unseal(
+    request: RemoveProviderRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_admin)
+):
+    """
+    Remove a provider from auto-unseal.
+    
+    This removes the wrapped DEK for the specified provider,
+    which means it can no longer be used for auto-unseal.
+    The provider's configuration is NOT deleted - only its
+    participation in auto-unseal is removed.
+    
+    This is useful when you want to:
+    - Remove a KMS provider from the redundancy list
+    - Rotate to a new key by removing old and adding new
+    - Clean up providers that are no longer available
+    """
+    from app.core.auto_unseal import auto_unseal_manager
+    
+    provider = request.provider.lower()
+    
+    # Validate provider name
+    valid_providers = ["ocikms", "gcpckms", "awskms", "azurekeyvault", "transit", "local"]
+    if provider not in valid_providers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid provider: {provider}. Valid providers: {', '.join(valid_providers)}"
+        )
+    
+    # Check that at least one other provider remains
+    available = auto_unseal_manager.get_available_providers(db)
+    if provider in available and len(available) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove the last provider. At least one provider must remain for auto-unseal to work."
+        )
+    
+    success, message = auto_unseal_manager.remove_provider_from_auto_unseal(db, provider)
+    
+    if success:
+        return {
+            "success": True,
+            "message": message,
+            "remaining_providers": auto_unseal_manager.get_available_providers(db)
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message
+        )
+
+
 # =============================================================================
 # Key Replication (Legacy - Copy Unseal Keys to KMS Provider for Redundancy)
 # =============================================================================
