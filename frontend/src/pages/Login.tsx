@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { api } from '../services/api'
+import { Download } from 'lucide-react'
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('')
@@ -40,6 +41,10 @@ const Login: React.FC = () => {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleDownloadRoot = () => {
+    window.location.href = '/api/v1/ca/root/download'
   }
 
   return (
@@ -128,6 +133,33 @@ const Login: React.FC = () => {
             </div>
           </div>
         </form>
+
+        <div className="mt-6">
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-gray-50 text-gray-500">
+                Or download certificate
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={handleDownloadRoot}
+              className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              <Download className="h-5 w-5 mr-2 text-gray-500" />
+              Download Root CA
+            </button>
+            <p className="mt-2 text-center text-xs text-gray-500">
+              Install this certificate to trust services signed by this PKI
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   )
