@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     libc6-dev \
     postgresql-client \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
